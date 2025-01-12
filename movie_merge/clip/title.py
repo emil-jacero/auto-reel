@@ -91,12 +91,26 @@ class TitleCardGenerator:
         shadow_offset: int = 3,
         alpha: int = 255,
     ) -> None:
-        shadow_color = (*ImageColor.getrgb(shadow_color), alpha)
-        text_color = (*ImageColor.getrgb(text_color), alpha)
+        base_image = draw.im
+        result = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
 
-        shadow_position = (position[0] + shadow_offset, position[1] + shadow_offset)
-        draw.text(shadow_position, text, font=font, fill=shadow_color)
-        draw.text(position, text, font=font, fill=text_color)
+        # Create shadow
+        shadow = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow)
+        shadow_pos = (position[0] + shadow_offset, position[1] + shadow_offset)
+        shadow_rgba = (*ImageColor.getrgb(shadow_color), alpha)
+        shadow_draw.text(shadow_pos, text, font=font, fill=shadow_rgba)
+
+        # Create text
+        text_layer = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_layer)
+        text_rgba = (*ImageColor.getrgb(text_color), alpha)
+        text_draw.text(position, text, font=font, fill=text_rgba)
+
+        # Composite layers
+        result = Image.alpha_composite(result, shadow)
+        result = Image.alpha_composite(result, text_layer)
+        base_image.paste(result, (0, 0))
 
     def generate_frame(
         self,
@@ -110,11 +124,11 @@ class TitleCardGenerator:
         if config is None:
             config = TitleCardConfig()
 
-        # Create a transparent background (all alpha values set to 0)
+        # Create base transparent image
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        # Create a drawing context
-        draw = ImageDraw.Draw(image, "RGBA")
+        draw = ImageDraw.Draw(image)
 
+        # Calculate text positions
         title_font = self._get_font(config.title.font_size)
         desc_font = self._get_font(config.description.font_size)
 
@@ -128,6 +142,7 @@ class TitleCardGenerator:
         # Calculate alpha for fade effect
         alpha = max(0, min(255, int(255 * opacity)))
 
+        # Handle description positioning and rendering
         if description:
             desc_bbox = draw.textbbox((0, 0), description, font=desc_font)
             desc_width = desc_bbox[2] - desc_bbox[0]
@@ -138,7 +153,6 @@ class TitleCardGenerator:
             desc_y = title_y + title_height + config.description.offset
 
             if config.description.font_shadow:
-                # Use transparent shadow for description
                 self._add_text_with_shadow(
                     draw,
                     (desc_x, desc_y),
@@ -151,10 +165,15 @@ class TitleCardGenerator:
                 )
             else:
                 text_color = ImageColor.getrgb(config.description.font_color)
-                draw.text((desc_x, desc_y), description, font=desc_font, fill=(*text_color, alpha))
+                text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+                text_draw = ImageDraw.Draw(text_layer)
+                text_draw.text(
+                    (desc_x, desc_y), description, font=desc_font, fill=(*text_color, alpha)
+                )
+                image.alpha_composite(text_layer)
 
+        # Render title
         if config.title.font_shadow:
-            # Use transparent shadow for title
             self._add_text_with_shadow(
                 draw,
                 (title_x, title_y),
@@ -167,7 +186,10 @@ class TitleCardGenerator:
             )
         else:
             text_color = ImageColor.getrgb(config.title.font_color)
-            draw.text((title_x, title_y), title, title_font, fill=(*text_color, alpha))
+            text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            text_draw = ImageDraw.Draw(text_layer)
+            text_draw.text((title_x, title_y), title, title_font, fill=(*text_color, alpha))
+            image.alpha_composite(text_layer)
 
         return image
 
