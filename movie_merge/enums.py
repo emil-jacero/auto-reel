@@ -55,17 +55,16 @@ class VideoCodec(Enum):
         if self.is_gpu_codec:
             preset = GPU_PRESET_MAP.get(preset, "p4")  # fallback to "p4" if not found
             rc = "vbr_hq"  # Recommended rate control for quality-based encoding
-            cq = str(quality)  # Constant quality (or quantization parameter)
             return {
                 "preset": preset,
                 "rc": rc,
-                "cq": cq,
+                "cq": str(quality),
                 "tune": tune.value if tune else None,
             }
         else:
             return {
                 "preset": preset,
-                "crf": cq,
+                "crf": str(quality),  # Use quality parameter directly for CRF
                 "tune": tune.value if tune else None,
             }
 

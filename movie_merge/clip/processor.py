@@ -193,8 +193,10 @@ class Clip:
     def convert_to_mp4(self) -> "Clip":
         """Convert video file to MP4 format."""
         if not self.needs_processing:
+            logger.debug(f"Clip {self.path} does not need conversion")
             return self
         try:
+            logger.debug(f"Converting {self.path} to MP4")
             # Create 'original' directory if needed
             original_dir = self.path.parent / "original"
             original_dir.mkdir(exist_ok=True)
@@ -233,15 +235,47 @@ class Clip:
             raise RuntimeError(f"Failed to convert video: {e}")
 
     def create_title(self, title: str, description: Optional[str] = None) -> "Clip":
-        generator = TitleCardGenerator(Path("/path/to/fonts"))
-        image = generator.generate(
+        """Create title overlay for clip."""
+        generator = TitleCardGenerator()
+        frames = generator.generate_fade_sequence(
             width=self.proc_config.options.target_resolution[0],
             height=self.proc_config.options.target_resolution[1],
             title=title,
             description=description,
-            config=self.dir_config,
+            config=self.dir_config.title_config,
         )
-        # Save to temp file and process with FFmpeg
-        temp_path = self.proc_config.options.temp_dir / f"{self.metadata.name}_title.png"
-        image.save(temp_path)
+
+        # Save frames as PNG sequence
+        temp_dir = self.proc_config.options.temp_dir / f"{self.metadata.name}_title_frames"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, frame in enumerate(frames):
+            frame_path = temp_dir / f"frame_{i:04d}.png"
+            frame.save(frame_path, "PNG")
+
+        # Create overlay video
+        overlay_path = (
+            self.proc_config.options.temp_dir / f"{self.metadata.name}_overlay{self.path.suffix}"
+        )
+        self._ffmpeg.create_overlay(
+            input_file=self.path,
+            frames_dir=temp_dir,
+            overlay_file=overlay_path,
+            fps=self.dir_config.title_config.fps,
+            duration=self.dir_config.title_config.duration,
+        )
+
+        # Apply overlay to video
+        output_file = (
+            self.proc_config.options.temp_dir / f"{self.path.stem}_with_title{self.path.suffix}"
+        )
+        self._ffmpeg.overlay_video(
+            input_file=self.path,
+            overlay_file=overlay_path,
+            output_file=output_file,
+            options=self.proc_config.options,
+        )
+
+        # Update clip path
+        self.path = output_file
         return self

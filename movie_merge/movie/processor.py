@@ -13,6 +13,7 @@ from ..clip.processor import Clip
 from ..config.directory import DirectoryConfig
 from ..config.processing import ProcessingConfig
 from ..config.sort import SortMethod
+from ..ffmepg.wrapper import FFmpegWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +49,16 @@ class Movie:
             proc_config: Processing configuration
             dir_config: Directory configuration
         """
-        self._proc_config = proc_config
-        self._dir_config = dir_config
+        self._ffmpeg: FFmpegWrapper = FFmpegWrapper()
+        self.proc_config = proc_config
+        self.dir_config = dir_config
         self.chapters: List[Chapter] = []
         self.clips: List[Clip] = []
 
         self.title: str = dir_config.title
         self.description: Optional[str] = dir_config.description
         self.directory = directory
-        self.metadata = self._dir_config.metadata
+        self.metadata = self.dir_config.metadata
         self.sort_config = dir_config.sort_config
 
     def to_dict(self) -> dict:
@@ -66,7 +68,7 @@ class Movie:
             "description": self.description,
             "directory": str(self.directory),
             "metadata": self.metadata.to_dict(),
-            "target_resolution": self._proc_config.options.target_resolution,
+            "target_resolution": self.proc_config.options.target_resolution,
             "sort_config": self.sort_config.to_dict(),
             "chapters": [chapter.to_dict() for chapter in self.chapters],
         }
@@ -100,7 +102,7 @@ class Movie:
                     video_file_path = Path(video_file)
                     logger.debug(f"Processing clip: {video_file.name}")
                     try:
-                        clip = Clip(video_file_path, self._proc_config, self._dir_config)
+                        clip = Clip(video_file_path, self.proc_config, self.dir_config)
                         logger.debug(
                             f"Clip metadata: {json.dumps(clip.to_dict(), indent=2, ensure_ascii=False)}"
                         )
@@ -194,7 +196,9 @@ class Movie:
 
                 # Create title card for the first clip in each chapter
                 if clip.is_title:
-                    clip.create_title(chapter.title, chapter.description)
+                    # replace the first clip with a title clip
+                    title_clip = clip.create_title(chapter.title, chapter.description)
+                    chapter.clips[0] = title_clip
 
         # Flatten all clips into single list
         for chapter in self.chapters:
@@ -208,7 +212,7 @@ class Movie:
         #         "description": self.description,
         #         "directory": str(self.directory),
         #         "metadata": self.metadata.to_dict(),
-        #         "target_resolution": self._proc_config.options.target_resolution,
+        #         "target_resolution": self.proc_config.options.target_resolution,
         #         "sort_config": self.sort_config.to_dict(),
         #         "chapters": [{
         #             "title": chapter.title,
@@ -228,5 +232,79 @@ class Movie:
         # logger.debug(f"Movie configuration: {json.dumps(minimal_movie_configuration, indent=2, ensure_ascii=False)}")
 
     def make(self, output_file: Path):
-        """Compile movie clips into a single video file."""
-        pass
+        """Compile movie clips into a single video file.
+
+        Args:
+            output_file: Path to output video file
+        """
+        if not self.clips:
+            logger.warning("No clips to process")
+            return
+
+        logger.info(f"Compiling {len(self.clips)} clips into movie: {output_file}")
+
+        # Create intermediate file list
+        concat_file = self.proc_config.options.temp_dir / "concat_list.txt"
+        with open(concat_file, "w", encoding="utf-8") as f:
+            for clip in self.clips:
+                f.write(f"file '{clip.path.absolute()}'\n")
+
+        try:
+            # Build ffmpeg command for concatenation
+            cmd = [
+                self._ffmpeg.ffmpeg_path,
+                "-y",  # Overwrite output file
+                "-f",
+                "concat",  # Use concat demuxer
+                "-safe",
+                "0",  # Don't restrict paths
+                "-i",
+                str(concat_file),  # Input file list
+                "-c",
+                "copy",  # Copy streams without re-encoding
+            ]
+
+            # Add video encoding options if needed
+            if any(clip.needs_processing for clip in self.clips):
+                # Get encoding options from config
+                video_options = self.proc_config.encoding.video_codec.get_encoding_options(
+                    quality=self.proc_config.encoding.crf, preset=self.proc_config.encoding.preset
+                )
+
+                # Add video codec
+                cmd.extend(["-c:v", self.proc_config.encoding.video_codec.value])
+
+                # Add encoding options
+                for key, value in video_options.items():
+                    if value is not None:
+                        cmd.extend([f"-{key}", str(value)])
+
+                # Add scaling if needed
+                width, height = self.proc_config.options.target_resolution
+                if width and height:
+                    cmd.extend(
+                        ["-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease"]
+                    )
+
+            # Add output file
+            cmd.append(str(output_file))
+
+            # Create output directory if needed
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if not self.proc_config.options.dry_run:
+                logger.debug(f"Running ffmpeg command: {' '.join(cmd)}")
+                self._ffmpeg._run_command(cmd)
+                logger.info(f"Successfully created movie: {output_file}")
+            else:
+                logger.info(f"Would create movie: {output_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to create movie: {e}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.exception("Traceback:")
+            raise RuntimeError(f"Failed to create movie: {e}")
+        finally:
+            # Clean up concat file
+            if concat_file.exists():
+                concat_file.unlink()

@@ -268,3 +268,53 @@ class FFmpegWrapper:
 
         except Exception as e:
             raise FFmpegError(f"Conversion failed: {str(e)}")
+
+    def create_overlay(
+        self,
+        input_file: Path,
+        frames_dir: Path,
+        overlay_file: Path,
+        fps: int = 30,
+        duration: float = 7.0,
+    ) -> None:
+        """Create overlay video from PNG frames."""
+        cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-framerate",
+            str(fps),
+            "-i",
+            str(frames_dir / "frame_%04d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuva420p",  # Required for alpha transparency
+            "-t",
+            str(duration),
+            "-shortest",
+            str(overlay_file),
+        ]
+        self._run_command(cmd)
+
+    def overlay_video(
+        self,
+        input_file: Path,
+        overlay_file: Path,
+        output_file: Path,
+        options: ProcessingOptions,
+    ) -> None:
+        """Apply overlay video to input video."""
+        cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-i",
+            str(input_file),
+            "-i",
+            str(overlay_file),
+            "-filter_complex",
+            "[1:v]format=yuva420p[overlay];[0:v][overlay]overlay=0:0",
+            "-c:a",
+            "copy",
+            str(output_file),
+        ]
+        self._run_command(cmd)

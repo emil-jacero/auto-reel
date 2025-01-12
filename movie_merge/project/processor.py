@@ -5,12 +5,12 @@ import shutil
 from pathlib import Path
 from typing import Dict, Generator, List, Optional, Tuple
 
-from .exceptions import ProcessingError
 from ..config.directory import DirectoryConfig, parse_directory_config
 from ..config.exceptions import DirectoryParseError
 from ..config.processing import ProcessingConfig
 from ..movie.processor import Movie
 from ..utils.file import should_ignore_directory, verify_writeable_directory
+from .exceptions import ProcessingError
 
 logger = logging.getLogger(__name__)
 
@@ -127,9 +127,7 @@ class Project:
             output_file.parent.mkdir(parents=True, exist_ok=True)
 
             # Compile movie
-            # movie.make(output_file)
-
-            logger.info(f"Successfully processed {directory} -> {output_file}")
+            movie.make(output_file)
 
         except Exception as e:
             raise ProcessingError(f"Failed to process directory {directory}: {str(e)}") from e

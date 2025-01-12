@@ -2,81 +2,21 @@
 import json
 import logging
 import re
-import yaml
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-
-from .exceptions import DirectoryParseError
-from .sort import SortConfig, SortMethod
+import yaml
 
 from movie_merge.constants import METADATA_FILE
 
+from ..clip.title import DescriptionConfig, TitleCardConfig, TitleConfig
+from .exceptions import DirectoryParseError
+from .sort import SortConfig, SortMethod
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TitleConfig:
-    """Configuration for title card appearance."""
-
-    font: str = "Arial"  # Font name. Overrides the TitleCardConfig font.
-    font_size: int = 70  # Font size for title text.
-    font_color: str = "white"  # Font color for title text.
-    font_shadow: bool = True  # Add shadow to text
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return {
-            "font": self.font,
-            "font_size": self.font_size,
-            "font_color": self.font_color,
-            "font_shadow": self.font_shadow,
-        }
-
-
-@dataclass
-class DescriptionConfig:
-    """Configuration for description card appearance."""
-
-    font: str = "Arial"  # Font name. Overrides the TitleCardConfig font.
-    font_size: int = 40  # Font size for description text.
-    font_color: str = "white"  # Font color for description text.
-    offset: int = 50  # Y offset from title position
-    font_shadow: bool = True  # Add shadow to text
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return {
-            "font": self.font,
-            "font_size": self.font_size,
-            "font_color": self.font_color,
-            "offset": self.offset,
-            "font_shadow": self.font_shadow,
-        }
-
-
-@dataclass
-class TitleCardConfig:
-    """Configuration for title card appearance."""
-
-    title: TitleConfig = field(default_factory=TitleConfig)
-    description: DescriptionConfig = field(default_factory=DescriptionConfig)
-    fade_duration: float = 2.0
-    duration: float = 7.0
-    position: Tuple[str, str] = ("center", "center")
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return {
-            "title": self.title.to_dict(),
-            "description": self.description.to_dict(),
-            "fade_duration": self.fade_duration,
-            "duration": self.duration,
-            "position": self.position,
-        }
 
 
 @dataclass
@@ -258,13 +198,13 @@ def _parse_title_config(config: dict) -> TitleCardConfig:
     return TitleCardConfig(
         title=TitleConfig(
             font=config.get("title", {}).get("font", "Arial"),
-            font_size=config.get("title", {}).get("font_size", 70),
+            font_size=config.get("title", {}).get("font_size", 200),
             font_color=config.get("title", {}).get("font_color", "white"),
             font_shadow=config.get("title", {}).get("font_shadow", True),
         ),
         description=DescriptionConfig(
             font=config.get("description", {}).get("font", "Arial"),
-            font_size=config.get("description", {}).get("font_size", 40),
+            font_size=config.get("description", {}).get("font_size", 150),
             font_color=config.get("description", {}).get("font_color", "white"),
             offset=config.get("description", {}).get("offset", 50),
             font_shadow=config.get("description", {}).get("font_shadow", True),

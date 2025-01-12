@@ -1,6 +1,6 @@
 """ Constants used in the movie_merge package. """
 
-UNSUPPORTED_VIDEO_EXTENSIONS = {".wmv" ".mts"}  # Windows Media Video  # AVCHD
+UNSUPPORTED_VIDEO_EXTENSIONS = [".wmv", ".mts"]  # Windows Media Video  # AVCHD Video
 
 GPU_PRESET_MAP = {
     "fastest": "p1",
