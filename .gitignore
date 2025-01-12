@@ -169,3 +169,11 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Other
+config.yaml
+testing.py
+*.mp3
+test.py
+output.log
+output_movie-merge.txt

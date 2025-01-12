@@ -1,0 +1,139 @@
+version: '3'
+
+vars:
+  # Color definitions
+  COLOR_BLUE: '\033[0;34m'
+  COLOR_GREEN: '\033[0;32m'
+  COLOR_YELLOW: '\033[1;33m'
+  COLOR_RED: '\033[0;31m'
+  COLOR_CYAN: '\033[0;36m'
+  COLOR_MAGENTA: '\033[0;35m'
+  COLOR_RESET: '\033[0m'
+  COLOR_BOLD: '\033[1m'
+
+tasks:
+  info:
+    silent: true
+    desc: Display essential GPU and FFmpeg capabilities
+    cmds:
+      - |
+        if ! command -v nvidia-smi &> /dev/null; then
+          echo "No NVIDIA GPU detected"
+          exit 0
+        fi
+
+        echo -e "\n{{.COLOR_BOLD}}=== GPU STATUS ==={{.COLOR_RESET}}"
+        nvidia-smi --query-gpu=gpu_name,memory.used,memory.total,temperature.gpu,utilization.gpu --format=csv,noheader | \
+          awk -F', ' \
+          -v blue="{{.COLOR_BLUE}}" \
+          -v green="{{.COLOR_GREEN}}" \
+          -v yellow="{{.COLOR_YELLOW}}" \
+          -v red="{{.COLOR_RED}}" \
+          -v reset="{{.COLOR_RESET}}" \
+          -v bold="{{.COLOR_BOLD}}" \
+          '{
+            temp=$4+0;
+            util=$5+0;
+            temp_color = (temp < 50 ? green : (temp < 70 ? yellow : red));
+            util_color = (util < 50 ? green : (util < 80 ? yellow : red));
+            printf "GPU: %s%s%s\nMemory: %s%s / %s%s\nTemp: %s%d°C%s\nUtil: %s%s%s\n",
+              blue, $1, reset,
+              yellow, $2, $3, reset,
+              temp_color, temp, reset,
+              util_color, $5, reset
+          }'
+
+        echo -e "\n{{.COLOR_BOLD}}=== FFMPEG CAPABILITIES ==={{.COLOR_RESET}}"
+        echo "Hardware Acceleration:"
+        ffmpeg -hide_banner -hwaccels | grep -v "Hardware acceleration methods:" | \
+          awk -v cyan="{{.COLOR_CYAN}}" -v reset="{{.COLOR_RESET}}" \
+          '{printf "%s%s%s ", cyan, $1, reset}'
+        echo -e "\n"
+
+        echo "NVIDIA Encoders:"
+        ffmpeg -hide_banner -encoders | grep -i nvidia | \
+          awk -v green="{{.COLOR_GREEN}}" -v reset="{{.COLOR_RESET}}" '{print "  " green $2 reset}' | sort
+
+        echo -e "\nNVIDIA Decoders:"
+        ffmpeg -hide_banner -decoders | grep -i nvidia | \
+          awk -v cyan="{{.COLOR_CYAN}}" -v reset="{{.COLOR_RESET}}" '{print "  " cyan $2 reset}' | sort
+
+  smi:
+    silent: true
+    desc: Display detailed NVIDIA GPU status
+    cmds:
+      - |
+        if ! command -v nvidia-smi &> /dev/null; then
+          echo "No NVIDIA GPU detected"
+          exit 0
+        fi
+
+        echo -e "{{.COLOR_BOLD}}=== GPU DETAILS ==={{.COLOR_RESET}}"
+        nvidia-smi --query-gpu=gpu_name,vbios_version,compute_mode --format=csv,noheader | \
+          awk -F', ' \
+          -v blue="{{.COLOR_BLUE}}" \
+          -v cyan="{{.COLOR_CYAN}}" \
+          -v reset="{{.COLOR_RESET}}" \
+          '{printf "Name: %s%s%s\nVBIOS: %s%s%s\nCompute Mode: %s%s%s\n",
+            blue, $1, reset,
+            cyan, $2, reset,
+            cyan, $3, reset}'
+
+        echo -e "\n{{.COLOR_BOLD}}=== DRIVER & CUDA ==={{.COLOR_RESET}}"
+        nvidia-smi --query-gpu=driver_version,cuda_version,power.limit --format=csv,noheader | \
+          awk -F', ' \
+          -v mag="{{.COLOR_MAGENTA}}" \
+          -v yellow="{{.COLOR_YELLOW}}" \
+          -v reset="{{.COLOR_RESET}}" \
+          '{printf "Driver: %s%s%s\nCUDA: %s%s%s\nMax Power: %s%s%s\n",
+            mag, $1, reset,
+            mag, $2, reset,
+            yellow, $3, reset}'
+
+        echo -e "\n{{.COLOR_BOLD}}=== CURRENT STATUS ==={{.COLOR_RESET}}"
+        nvidia-smi --query-gpu=temperature.gpu,fan.speed,power.draw,memory.used,memory.total,utilization.gpu,utilization.memory \
+          --format=csv,noheader | \
+          awk -F', ' \
+          -v green="{{.COLOR_GREEN}}" \
+          -v yellow="{{.COLOR_YELLOW}}" \
+          -v red="{{.COLOR_RED}}" \
+          -v reset="{{.COLOR_RESET}}" \
+          '{
+            temp=$1+0;
+            fan=$2+0;
+            power=$3+0;
+            mem_used=$4+0;
+            mem_total=$5+0;
+            gpu_util=$6+0;
+            mem_util=$7+0;
+
+            temp_color = (temp < 50 ? green : (temp < 70 ? yellow : red));
+            fan_color = (fan < 50 ? green : (fan < 80 ? yellow : red));
+            power_color = (power < 100 ? green : (power < 150 ? yellow : red));
+            gpu_color = (gpu_util < 50 ? green : (gpu_util < 80 ? yellow : red));
+            mem_color = (mem_util < 50 ? green : (mem_util < 80 ? yellow : red));
+
+            printf "Temperature: %s%d°C%s\nFan Speed: %s%s%s\nPower Draw: %s%s%s\nMemory: %s%s / %s%s\nGPU Util: %s%s%s\nMem Util: %s%s%s\n",
+              temp_color, temp, reset,
+              fan_color, $2, reset,
+              power_color, $3, reset,
+              yellow, $4, $5, reset,
+              gpu_color, $6, reset,
+              mem_color, $7, reset
+          }'
+
+        echo -e "\n{{.COLOR_BOLD}}=== PROCESSES ==={{.COLOR_RESET}}"
+        nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader | \
+          if [ "$(wc -l)" -gt 0 ]; then
+            awk -F', ' \
+            -v cyan="{{.COLOR_CYAN}}" \
+            -v yellow="{{.COLOR_YELLOW}}" \
+            -v green="{{.COLOR_GREEN}}" \
+            -v reset="{{.COLOR_RESET}}" \
+            '{printf "PID: %s%s%s\nName: %s%s%s\nMemory: %s%s%s\n\n",
+              cyan, $1, reset,
+              yellow, $2, reset,
+              green, $3, reset}'
+          else
+            echo -e "{{.COLOR_RED}}No GPU processes running{{.COLOR_RESET}}"
+          fi

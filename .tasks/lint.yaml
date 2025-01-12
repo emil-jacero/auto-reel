@@ -1,0 +1,34 @@
+version: '3'
+
+tasks:
+  lint:
+    desc: Run all linting checks
+    cmds:
+      - task: lint:black
+      - task: lint:isort
+      - task: lint:mypy
+      - task: lint:pylint
+
+  lint:black:
+    internal: true
+    desc: Format code with black
+    cmds:
+      - '{{.VENV_BIN}}/black movie_merge/ tests/'
+
+  lint:isort:
+    internal: true
+    desc: Sort imports with isort
+    cmds:
+      - '{{.VENV_BIN}}/isort movie_merge/ tests/'
+
+  lint:mypy:
+    internal: true
+    desc: Run type checking with mypy
+    cmds:
+      - '{{.VENV_BIN}}/mypy movie_merge/ tests/'
+
+  lint:pylint:
+    internal: true
+    desc: Run pylint
+    cmds:
+      - '{{.VENV_BIN}}/pylint movie_merge/ tests/'

@@ -1,0 +1,23 @@
+version: '3'
+
+vars:
+  # Docker build variables
+  CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
+  IMG: '{{.IMG | default "emiljacero/movie-merger:dev"}}'
+
+tasks:
+  docker:build:
+    desc: Build docker image
+    vars:
+      PUSH: '{{.PUSH | default "true"}}'
+    cmds:
+      - echo "Building Docker image {{.IMG}}..."
+      - |
+        BUILD_ARGS="--tag {{.IMG}} {{.EXTRA_BUILD_ARGS}}"
+        if [ "{{.PUSH}}" = "true" ]; then
+          echo "Building and pushing {{.BUILD_TYPE}} image..."
+          {{.CONTAINER_TOOL}} buildx build $BUILD_ARGS --push {{.ROOT_DIR}}/.
+        else
+          echo "Building {{.BUILD_TYPE}} image without pushing..."
+          {{.CONTAINER_TOOL}} buildx build $BUILD_ARGS --load {{.ROOT_DIR}}/.
+        fi

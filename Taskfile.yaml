@@ -1,0 +1,204 @@
+version: '3'
+
+includes:
+  build:
+    taskfile: ./.tasks/build.yaml
+    internal: false
+  lint:
+    taskfile: ./.tasks/lint.yaml
+    internal: false
+  gpu:
+    taskfile: ./.tasks/gpu.yaml
+    internal: false
+
+vars:
+  # Project-specific variables
+  PYTHON: python3.13
+  VENV_DIR: '{{.ROOT_DIR}}/.venv'
+  VENV_BIN: '{{.VENV_DIR}}/bin'
+  VENV_PYTHON: '{{.VENV_BIN}}/python'
+  VENV_PIP: '{{.VENV_BIN}}/pip'
+  PROJECT_ROOT: '{{.ROOT_DIR | default .}}'
+
+  # Docker-specific variables
+  CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
+  IMG: '{{.IMG | default "movie-merge:dev"}}'
+
+  # Build variables
+  BUILD_PLATFORM: '{{.BUILD_PLATFORM | default "linux/amd64"}}'
+
+  # Concatenation variables
+  CONCAT_EXCLUDE: '**__pycache__,*.pyc'
+  CONCAT_INCLUDE: 'movie_merge/**,pyproject.toml,Dockerfile,README.md,Taskfile.yaml'
+  # .pre-commit-config.yaml,.github/**,tests/**
+
+tasks:
+  default:
+    cmds:
+      - task --list-all
+    silent: true
+
+  concat:
+    desc: Concatenate project files based on include and exclude patterns
+    cmds:
+      - '$HOME/.local/bin/concat -e "{{.CONCAT_EXCLUDE}}" -i "{{.CONCAT_INCLUDE}}" -d {{.ROOT_DIR}} -o output_movie-merge.txt'
+
+  setup:
+    desc: Setup development environment
+    cmds:
+      - task: venv-create
+      - task: install-dev
+      - task: setup-pre-commit
+      # - task: setup-nvidia
+    status:
+      - test -d {{.VENV_DIR}}
+
+  setup-nvidia:
+    desc: Setup NVIDIA development environment
+    cmds:
+      - |
+        if command -v nvidia-smi &> /dev/null; then
+          echo "Installing NVIDIA development packages..."
+          sudo apt-get update && sudo apt-get install -y \
+            nvidia-cuda-toolkit \
+            nvidia-container-toolkit \
+            ffmpeg
+          sudo nvidia-ctk runtime configure --runtime=docker
+          sudo systemctl restart docker
+        else
+          echo "NVIDIA GPU not detected. Skipping NVIDIA setup."
+        fi
+
+  venv-create:
+    desc: Create virtual environment
+    cmds:
+      - '{{.PYTHON}} -m venv {{.VENV_DIR}}'
+    status:
+      - test -d {{.VENV_DIR}}
+
+  venv-clean:
+    desc: Remove virtual environment
+    cmds:
+      - rm -rf {{.VENV_DIR}}
+
+  clean:
+    desc: Clean all build and temporary files
+    cmds:
+      - rm -rf build/ dist/ *.egg-info .pytest_cache .coverage .mypy_cache .tox
+      - find . -type d -name __pycache__ -exec rm -rf {} +
+
+  install:
+    desc: Install package
+    deps: [venv-create]
+    cmds:
+      - '{{.VENV_PIP}} install -e .'
+
+  install-dev:
+    desc: Install development dependencies
+    deps: [venv-create]
+    cmds:
+      - '{{.VENV_PIP}} install --upgrade pip'
+      - '{{.VENV_PIP}} install -e ".[dev,docs]"'
+
+  setup-pre-commit:
+    desc: Setup pre-commit hooks
+    deps: [install-dev]
+    cmds:
+      - '{{.VENV_BIN}}/pre-commit install'
+    status:
+      - test -f .git/hooks/pre-commit
+
+  test:
+    desc: Run tests with pytest
+    cmds:
+      - '{{.VENV_BIN}}/pytest {{.CLI_ARGS}}'
+
+  test-cov:
+    desc: Run tests with coverage report
+    cmds:
+      - '{{.VENV_BIN}}/pytest --cov=movie_merger --cov-report=term-missing {{.CLI_ARGS}}'
+
+  build:
+    desc: Build Docker image
+    vars:
+      PLATFORM: '{{.BUILD_PLATFORM}}'
+      PUSH: '{{.PUSH | default "false"}}'
+    cmds:
+      - |
+        {{.CONTAINER_TOOL}} buildx build \
+          --platform {{.PLATFORM}} \
+          {{if eq .PUSH "true"}}--push{{else}}--load{{end}} \
+          --tag {{.IMG}} \
+          .
+
+  docker:run:
+    desc: Run docker container with NVIDIA support
+    vars:
+      INPUT_DIR: '{{.INPUT_DIR | default "./hack/input"}}'
+      OUTPUT_DIR: '{{.OUTPUT_DIR | default "./hack/output"}}'
+      YEAR: '{{.YEAR | default 2024}}'
+      USE_GPU: '{{.USE_GPU | default "true"}}'
+      GPU_QUALITY: '{{.GPU_QUALITY | default "23"}}'
+      THREADS: '{{.THREADS | default 8}}'
+    cmds:
+      - |
+        {{.CONTAINER_TOOL}} run --rm -it \
+          {{if eq .USE_GPU "true"}}--gpus all{{end}} \
+          -v {{.INPUT_DIR}}:/input \
+          -v {{.OUTPUT_DIR}}:/output \
+          {{.IMG}} \
+          --years {{.YEAR}} \
+          --threads {{.THREADS}} \
+          --log-level DEBUG \
+          {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
+          --gpu-quality {{.GPU_QUALITY}} \
+          {{.CLI_ARGS}}
+
+  run:
+    desc: Run movie-merger CLI
+    deps: [install]
+    vars:
+      INPUT_DIR: '{{.INPUT_DIR | default "./hack/input"}}'
+      OUTPUT_DIR: '{{.OUTPUT_DIR | default "./hack/output"}}'
+      YEAR: '{{.YEAR | default 2024}}'
+      USE_GPU: '{{.USE_GPU | default "true"}}'
+      GPU_QUALITY: '{{.GPU_QUALITY | default "20"}}'
+      THREADS: '{{.THREADS | default 8}}'
+    env:
+      PYTHONPATH: '{{.PROJECT_ROOT}}'
+    cmds:
+      - |
+        {{.VENV_BIN}}/movie-merge \
+          --input-dir {{.INPUT_DIR}} \
+          --output-dir {{.OUTPUT_DIR}}\
+          --years {{.YEAR}} \
+          --threads {{.THREADS}} \
+          --log-level DEBUG \
+          {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
+          --gpu-quality {{.GPU_QUALITY}} \
+          {{.CLI_ARGS}}
+
+  docs:
+    desc: Build documentation
+    cmds:
+      - '{{.VENV_BIN}}/sphinx-build -b html docs/ docs/_build/html'
+
+  docs-serve:
+    desc: Serve documentation locally
+    cmds:
+      - python -m http.server --directory docs/_build/html 8000
+
+  update-deps:
+    desc: Update all dependencies
+    cmds:
+      - '{{.VENV_PIP}} install --upgrade pip'
+      - '{{.VENV_PIP}} install --upgrade -e ".[dev,docs]"'
+      - '{{.VENV_PIP}} install --upgrade -r requirements.txt'
+
+  version:
+    desc: Show versions of Python and key dependencies
+    cmds:
+      - |
+        echo "Python version: $({{.VENV_PYTHON}} --version)"
+        echo "Package versions:"
+        {{.VENV_PIP}} freeze | grep -E "moviepy|pytest|black|mypy|pylint|sphinx"
