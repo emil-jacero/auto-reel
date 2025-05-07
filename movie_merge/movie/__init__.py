@@ -1,6 +1,6 @@
-""" Movie module. """
+"""Movie module."""
 
-from .processor import Movie, Chapter
+from .processor import Chapter, Movie
 
 __all__ = [
     "Movie",

@@ -1,4 +1,4 @@
-""" Custom exceptions for config. """
+"""Custom exceptions for config."""
 
 
 class DirectoryParseError(Exception):

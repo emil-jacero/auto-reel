@@ -54,6 +54,7 @@ class Movie:
         self.dir_config = dir_config
         self.chapters: List[Chapter] = []
         self.clips: List[Clip] = []
+        self.target_fps: Optional[float] = None  # Store target FPS from first clip
 
         self.title: str = dir_config.title
         self.description: Optional[str] = dir_config.description
@@ -72,6 +73,20 @@ class Movie:
             "sort_config": self.sort_config.to_dict(),
             "chapters": [chapter.to_dict() for chapter in self.chapters],
         }
+
+    def _get_target_fps(self, clips: List[Clip]) -> float:
+        """Get target FPS from first clip."""
+        if not clips:
+            return 30.0  # Default fallback
+
+        first_clip = clips[0]
+        fps = first_clip.metadata.frame_rate
+
+        if fps <= 0 or fps > 120:  # Sanity check
+            logger.warning(f"Invalid FPS detected in first clip: {fps}, using 30 FPS")
+            return 30.0
+
+        return fps
 
     def _sort_clips(self, clips: List[Clip]) -> List[Clip]:
         """Sort clips according to directory configuration."""
@@ -106,6 +121,7 @@ class Movie:
                         logger.debug(
                             f"Clip metadata: {json.dumps(clip.to_dict(), indent=2, ensure_ascii=False)}"
                         )
+                        # logger.debug(f"Clip metadata: {clip.to_dict()}")
 
                         # Add clip to list
                         clips.append(clip)
@@ -140,10 +156,6 @@ class Movie:
                 clips=root_clips,
                 is_default=True,
             )
-            # Sort clips based on configuration
-            default_chapter.clips = (
-                self._sort_clips(default_chapter.clips) if default_chapter.clips else []
-            )
 
             # Add default chapter to chapters list
             self.chapters.append(default_chapter)
@@ -162,8 +174,6 @@ class Movie:
                         clips=chapter_clips,
                         is_default=False,
                     )
-                    # Sort clips based on configuration
-                    chapter.clips = self._sort_clips(chapter.clips) if chapter.clips else []
 
                     # Add chapter to list
                     self.chapters.append(chapter)
@@ -182,10 +192,24 @@ class Movie:
         logger.debug("Chapters: " + ", ".join(chapter.title for chapter in self.chapters))
 
     def process(self):
-        """Process movie clips and chapters."""
+        """Process movie clips and create title cards.
 
+        Processes each chapter and creates title cards for the first clip.
+        Converts all clips to MP4 format if needed.
+        """
         # Scan directory for clips and organize into chapters
         self.scan_directory()
+
+        # Get target FPS from first clip in first chapter
+        for chapter in self.chapters:
+            if chapter.clips:
+                self.target_fps = self._get_target_fps(chapter.clips)
+                break
+
+        if not self.target_fps:
+            self.target_fps = 30.0  # Fallback if no clips found
+
+        logger.info(f"Using target framerate: {self.target_fps} FPS")
 
         # Process each chapter
         logger.info("Processing chapters.")
@@ -196,95 +220,120 @@ class Movie:
 
                 # Create title card for the first clip in each chapter
                 if clip.is_title:
-                    # replace the first clip with a title clip
-                    title_clip = clip.create_title(chapter.title, chapter.description)
+                    # Update title card config with target FPS
+                    chapter_title_config = self.dir_config.title_config
+                    chapter_title_config.fps = self.target_fps
+
+                    # Create title with matching FPS
+                    title_clip = clip.create_title(
+                        chapter.title, chapter.description, title_config=chapter_title_config
+                    )
                     chapter.clips[0] = title_clip
 
         # Flatten all clips into single list
         for chapter in self.chapters:
             self.clips.extend(chapter.clips)
 
-        logger.info(f"Processed {len(self.clips)} clips in total")
+        logger.info(f"Processed {len(self.clips)} clips in total using {self.target_fps} FPS")
         logger.debug(f"Movie title: {self.title}")
         logger.debug(f"Movie description: {self.description}")
-        # minimal_movie_configuration = {
-        #         "title": self.title,
-        #         "description": self.description,
-        #         "directory": str(self.directory),
-        #         "metadata": self.metadata.to_dict(),
-        #         "target_resolution": self.proc_config.options.target_resolution,
-        #         "sort_config": self.sort_config.to_dict(),
-        #         "chapters": [{
-        #             "title": chapter.title,
-        #             "description": chapter.description,
-        #             "directory": str(chapter.directory),
-        #             "is_default": chapter.is_default,
-        #             "clips": [{
-        #                 "path": str(clip.path),
-        #                 "is_title": clip.is_title,
-        #         } for clip in chapter.clips]
-        #         } for chapter in self.chapters],
-        #         "all_clips": [{
-        #             "path": str(clip.path),
-        #             "is_title": clip.is_title,
-        #         } for clip in self.clips]
-        # }
-        # logger.debug(f"Movie configuration: {json.dumps(minimal_movie_configuration, indent=2, ensure_ascii=False)}")
 
     def make(self, output_file: Path):
-        """Compile movie clips into a single video file.
-
-        Args:
-            output_file: Path to output video file
-        """
+        """Compile movie clips into a single video file."""
         if not self.clips:
             logger.warning("No clips to process")
             return
 
         logger.info(f"Compiling {len(self.clips)} clips into movie: {output_file}")
-
-        # Create intermediate file list
-        concat_file = self.proc_config.options.temp_dir / "concat_list.txt"
-        with open(concat_file, "w", encoding="utf-8") as f:
-            for clip in self.clips:
-                f.write(f"file '{clip.path.absolute()}'\n")
+        logger.info(f"Using target framerate: {self.target_fps} FPS")
 
         try:
-            # Build ffmpeg command for concatenation
-            cmd = [
-                self._ffmpeg.ffmpeg_path,
-                "-y",  # Overwrite output file
-                "-f",
-                "concat",  # Use concat demuxer
-                "-safe",
-                "0",  # Don't restrict paths
-                "-i",
-                str(concat_file),  # Input file list
-                "-c",
-                "copy",  # Copy streams without re-encoding
-            ]
+            # Build ffmpeg command with complex filter for concatenation
+            cmd = [self._ffmpeg.ffmpeg_path, "-y"]
 
-            # Add video encoding options if needed
-            if any(clip.needs_processing for clip in self.clips):
-                # Get encoding options from config
-                video_options = self.proc_config.encoding.video_codec.get_encoding_options(
-                    quality=self.proc_config.encoding.crf, preset=self.proc_config.encoding.preset
+            # Add input files
+            for clip in self.clips:
+                cmd.extend(["-i", str(clip.path)])
+
+            # Build filter complex string for proper concatenation
+            filter_complex = []
+
+            # Process each input stream
+            for i in range(len(self.clips)):
+                # Scale and set framerate for video
+                width, height = self.proc_config.options.target_resolution
+                filter_complex.append(
+                    f"[{i}:v]fps={self.target_fps},"
+                    f"scale={width}:{height}:force_original_aspect_ratio=decrease[v{i}]"
+                )
+                # Format audio
+                filter_complex.append(
+                    f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a{i}]"
                 )
 
-                # Add video codec
-                cmd.extend(["-c:v", self.proc_config.encoding.video_codec.value])
+            # Collect all normalized streams for concat
+            video_streams = "".join(f"[v{i}]" for i in range(len(self.clips)))
+            audio_streams = "".join(f"[a{i}]" for i in range(len(self.clips)))
 
-                # Add encoding options
-                for key, value in video_options.items():
-                    if value is not None:
-                        cmd.extend([f"-{key}", str(value)])
+            # Add concat filters
+            filter_complex.append(f"{video_streams}concat=n={len(self.clips)}:v=1:a=0[vout]")
+            filter_complex.append(f"{audio_streams}concat=n={len(self.clips)}:v=0:a=1[aout]")
 
-                # Add scaling if needed
-                width, height = self.proc_config.options.target_resolution
-                if width and height:
-                    cmd.extend(
-                        ["-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease"]
-                    )
+            # Add the complete filter complex to the command
+            cmd.extend(["-filter_complex", ";".join(filter_complex)])
+
+            # Map output streams
+            cmd.extend(["-map", "[vout]", "-map", "[aout]"])
+
+            # Video codec settings
+            if self.proc_config.encoding.video_codec.is_gpu_codec:
+                # NVENC specific settings
+                cmd.extend(
+                    [
+                        "-c:v",
+                        self.proc_config.encoding.video_codec.value,
+                        "-rc:v",
+                        "vbr",  # Variable bitrate mode
+                        "-cq:v",
+                        str(self.proc_config.encoding.crf),
+                        "-b:v",
+                        "0",  # Let VBR mode handle bitrate
+                        "-maxrate:v",
+                        "100M",
+                        "-profile:v",
+                        "high",
+                        "-tune",
+                        "hq",  # High quality tuning
+                        "-preset",
+                        "p1",  # Adjust preset as needed
+                    ]
+                )
+            else:
+                # CPU encoding settings
+                cmd.extend(
+                    [
+                        "-c:v",
+                        self.proc_config.encoding.video_codec.value,
+                        "-crf",
+                        str(self.proc_config.encoding.crf),
+                        "-preset",
+                        self.proc_config.encoding.preset,
+                    ]
+                )
+
+            # Audio codec settings
+            cmd.extend(
+                [
+                    "-c:a",
+                    self.proc_config.encoding.audio_codec.value,
+                    "-b:a",
+                    "192k",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                ]
+            )
 
             # Add output file
             cmd.append(str(output_file))
@@ -304,7 +353,3 @@ class Movie:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.exception("Traceback:")
             raise RuntimeError(f"Failed to create movie: {e}")
-        finally:
-            # Clean up concat file
-            if concat_file.exists():
-                concat_file.unlink()

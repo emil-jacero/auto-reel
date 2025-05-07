@@ -1,0 +1,16 @@
+directory: .
+output_file: "output_auto-reel.txt"
+
+exclude_patterns:
+  - "__pycache__"
+  - ".pyc"
+
+include_patterns:
+  - "movie_merge/**"
+  - ".tasks/**"
+  - "hack/**"
+  - "pyproject.toml"
+  - "Dockerfile"
+  - "README.md"
+  - "Taskfile.yaml"
+  - "TEST.md"

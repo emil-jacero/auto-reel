@@ -1,4 +1,4 @@
-""" Simple stdout logging configuration. """
+"""Simple stdout logging configuration."""
 
 # movie_merge/utils/logging.py
 import logging

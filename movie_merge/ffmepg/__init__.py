@@ -1,7 +1,7 @@
-""" FFmpeg wrapper module. """
+"""FFmpeg wrapper module."""
 
-from .wrapper import FFmpegWrapper
 from .exceptions import FFmpegError
+from .wrapper import FFmpegWrapper
 
 __all__ = [
     "FFmpegWrapper",

@@ -1,4 +1,4 @@
-""" Custom exceptions for FFmpeg-related errors. """
+"""Custom exceptions for FFmpeg-related errors."""
 
 
 class FFmpegError(Exception):

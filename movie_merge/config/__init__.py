@@ -1,4 +1,4 @@
-""" Configuration module for movie_merge. """
+"""Configuration module for movie_merge."""
 
 from .directory import DirectoryConfig, Metadata
 from .exceptions import DirectoryParseError

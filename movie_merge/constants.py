@@ -1,4 +1,4 @@
-""" Constants used in the movie_merge package. """
+"""Constants used in the movie_merge package."""
 
 UNSUPPORTED_VIDEO_EXTENSIONS = [".wmv", ".mts"]  # Windows Media Video  # AVCHD Video
 

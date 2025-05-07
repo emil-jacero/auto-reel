@@ -1,4 +1,5 @@
 """Directory configuration and parsing."""
+
 import json
 import logging
 import re
@@ -47,9 +48,9 @@ class DirectoryConfig:
     """Configuration for directory processing."""
 
     title: Optional[str] = None  # Title of the movie. Overrides auto-parsed title.
-    description: Optional[
-        str
-    ] = None  # Description of the movie. Overrides auto-parsed description.
+    description: Optional[str] = (
+        None  # Description of the movie. Overrides auto-parsed description.
+    )
     metadata: Metadata = field(
         default_factory=Metadata
     )  # Metadata for the movie. Usually parsed from folder name.
@@ -149,7 +150,7 @@ def parse_directory_config(directory: Path) -> DirectoryConfig:
 
     # Set description from location if not explicitly set
     if not config.description and config.metadata.location:
-        config.description = f"Filmed in {config.metadata.location}"
+        config.description = f"Plats: {config.metadata.location}"
 
     # Generate movie title if not set
     if not config.title:
@@ -197,19 +198,27 @@ def _parse_title_config(config: dict) -> TitleCardConfig:
     """Parse title configuration from dictionary."""
     return TitleCardConfig(
         title=TitleConfig(
-            font=config.get("title", {}).get("font", "Arial"),
-            font_size=config.get("title", {}).get("font_size", 200),
+            font=config.get("title", {}).get("font", "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf"),
+            font_size=config.get("title", {}).get("font_size", 70),
             font_color=config.get("title", {}).get("font_color", "white"),
             font_shadow=config.get("title", {}).get("font_shadow", True),
+            kerning=config.get("description", {}).get("kerning", 1),
+            interline=config.get("description", {}).get("interline", 1.5),
         ),
         description=DescriptionConfig(
-            font=config.get("description", {}).get("font", "Arial"),
-            font_size=config.get("description", {}).get("font_size", 150),
+            font=config.get("description", {}).get(
+                "font", "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf"
+            ),
+            font_size=config.get("description", {}).get("font_size", 50),
             font_color=config.get("description", {}).get("font_color", "white"),
             offset=config.get("description", {}).get("offset", 50),
             font_shadow=config.get("description", {}).get("font_shadow", True),
+            kerning=config.get("description", {}).get("kerning", 1),
+            interline=config.get("description", {}).get("interline", 1.5),
         ),
         fade_duration=config.get("fade_duration", 2.0),
         duration=config.get("duration", 7.0),
         position=config.get("position", ("center", "center")),
+        background_opacity=config.get("background_opacity", 0.4),
+        fps=config.get("fps", 25),
     )

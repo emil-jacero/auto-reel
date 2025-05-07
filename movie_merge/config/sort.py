@@ -1,4 +1,4 @@
-""" Configuration for sorting videos. """
+"""Configuration for sorting videos."""
 
 import logging
 from dataclasses import dataclass

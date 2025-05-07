@@ -1,4 +1,4 @@
-""" Handles operations on individual video files. """
+"""Handles operations on individual video files."""
 
 import logging
 import subprocess
@@ -13,7 +13,7 @@ from movie_merge.constants import UNSUPPORTED_VIDEO_EXTENSIONS
 from ..config.directory import DirectoryConfig
 from ..config.processing import ProcessingConfig
 from ..ffmepg.wrapper import FFmpegWrapper
-from .title import TitleCardGenerator
+from .title import TitleCardConfig, TitleCardGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +190,9 @@ class Clip:
         """Check if clip needs processing."""
         return self.path.suffix.lower() in UNSUPPORTED_VIDEO_EXTENSIONS
 
-    def convert_to_mp4(self) -> "Clip":
-        """Convert video file to MP4 format."""
-        if not self.needs_processing:
+    def convert_to_mp4(self, target_fps: Optional[float] = None) -> "Clip":
+        """Convert video file to MP4 format with optional framerate adjustment."""
+        if not self.needs_processing and not target_fps:
             logger.debug(f"Clip {self.path} does not need conversion")
             return self
         try:
@@ -206,14 +206,31 @@ class Clip:
             original_file = original_dir / self.path.name
 
             if not self.proc_config.options.dry_run:
-                # Convert using FFmpeg wrapper
-                self._ffmpeg.convert(
-                    input_file=self.path,
-                    output_file=output_file,
-                    encoding_config=self.proc_config.encoding,
-                    options=self.proc_config.options,
-                    progress_callback=lambda p: logger.debug(f"Conversion progress: {p:.1f}%"),
+                # Build conversion command
+                cmd = [self._ffmpeg.ffmpeg_path, "-y", "-i", str(self.path)]
+
+                # Add framerate adjustment if needed
+                if target_fps and abs(self.metadata.frame_rate - target_fps) > 0.01:
+                    logger.info(
+                        f"Adjusting framerate from {self.metadata.frame_rate} to {target_fps}"
+                    )
+                    cmd.extend(["-r", str(target_fps)])
+
+                # Add encoding options
+                video_options = self.proc_config.encoding.video_codec.get_encoding_options(
+                    quality=self.proc_config.encoding.crf, preset=self.proc_config.encoding.preset
                 )
+
+                cmd.extend(["-c:v", self.proc_config.encoding.video_codec.value])
+                for key, value in video_options.items():
+                    if value is not None:
+                        cmd.extend([f"-{key}", str(value)])
+
+                # Add output file
+                cmd.append(str(output_file))
+
+                # Run conversion
+                self._ffmpeg._run_command(cmd)
 
                 # Move original file to original directory
                 self.path.rename(original_file)
@@ -234,48 +251,47 @@ class Clip:
                 logger.exception("Traceback:")
             raise RuntimeError(f"Failed to convert video: {e}")
 
-    def create_title(self, title: str, description: Optional[str] = None) -> "Clip":
+    def create_title(
+        self,
+        title: str,
+        description: Optional[str] = None,
+        title_config: Optional[TitleCardConfig] = None,
+    ) -> "Clip":
         """Create title overlay for clip."""
-        generator = TitleCardGenerator()
-        frames = generator.generate_fade_sequence(
-            width=self.proc_config.options.target_resolution[0],
-            height=self.proc_config.options.target_resolution[1],
-            title=title,
-            description=description,
-            config=self.dir_config.title_config,
-        )
+        try:
+            logger.info(f"Creating title sequence for clip: {self.path.name}")
 
-        # Save frames as PNG sequence
-        temp_dir = self.proc_config.options.temp_dir / f"{self.metadata.name}_title_frames"
-        temp_dir.mkdir(parents=True, exist_ok=True)
+            # Use provided title config or default from directory config
+            if title_config is None:
+                title_config = self.dir_config.title_config
 
-        for i, frame in enumerate(frames):
-            frame_path = temp_dir / f"frame_{i:04d}.png"
-            frame.save(frame_path, "PNG")
+            generator = TitleCardGenerator()
+            output_file = (
+                self.proc_config.options.temp_dir
+                / f"{self.metadata.name}_with_title{self.path.suffix}"
+            )
 
-        # Create overlay video
-        overlay_path = (
-            self.proc_config.options.temp_dir / f"{self.metadata.name}_overlay{self.path.suffix}"
-        )
-        self._ffmpeg.create_overlay(
-            input_file=self.path,
-            frames_dir=temp_dir,
-            overlay_file=overlay_path,
-            fps=self.dir_config.title_config.fps,
-            duration=self.dir_config.title_config.duration,
-        )
+            # Generate the title sequence using the specified framerate
+            generator.generate_title_sequence(
+                input_file=self.path,
+                output_file=output_file,
+                title=title,
+                description=description,
+                config=title_config,
+                threads=self.proc_config.options.threads,
+                fps=self.metadata.frame_rate,
+            )
 
-        # Apply overlay to video
-        output_file = (
-            self.proc_config.options.temp_dir / f"{self.path.stem}_with_title{self.path.suffix}"
-        )
-        self._ffmpeg.overlay_video(
-            input_file=self.path,
-            overlay_file=overlay_path,
-            output_file=output_file,
-            options=self.proc_config.options,
-        )
+            # Update clip path to point to new video with title
+            self.path = output_file
+            # Update metadata for the new clip
+            self.metadata = self._extract_metadata()
 
-        # Update clip path
-        self.path = output_file
-        return self
+            logger.info(f"Successfully created title sequence: {output_file}")
+            return self
+
+        except Exception as e:
+            logger.error(f"Failed to create title for clip {self.path}: {e}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.exception("Traceback:")
+            raise RuntimeError(f"Failed to create title: {e}")

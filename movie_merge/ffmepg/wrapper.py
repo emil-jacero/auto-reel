@@ -1,4 +1,4 @@
-""" Wrapper for FFmpeg operations. """
+"""Wrapper for FFmpeg operations."""
 
 import json
 import logging

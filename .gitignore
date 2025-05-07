@@ -176,4 +176,4 @@ testing.py
 *.mp3
 test.py
 output.log
-output_movie-merge.txt
+output_auto-reel.txt

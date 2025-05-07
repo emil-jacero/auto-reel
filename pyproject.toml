@@ -15,8 +15,12 @@ authors = [
 ]
 dependencies = [
     "pyyaml>=6.0.0",
-    "Pillow>=11.0.0",
+    "pillow>=9.2.0,<11.0",
     "numpy>=2.2.1",
+    "moviepy==2.1.2",
+    "imageio-ffmpeg>=0.5.1",
+    "proglog<=1.0.0",
+    "tqdm>=4.67.1",
 ]
 
 [project.optional-dependencies]

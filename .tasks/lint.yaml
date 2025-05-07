@@ -10,25 +10,25 @@ tasks:
       - task: lint:pylint
 
   lint:black:
-    internal: true
+    internal: false
     desc: Format code with black
     cmds:
-      - '{{.VENV_BIN}}/black movie_merge/ tests/'
+      - '{{.VENV_BIN}}/black movie_merge/'
 
   lint:isort:
-    internal: true
+    internal: false
     desc: Sort imports with isort
     cmds:
-      - '{{.VENV_BIN}}/isort movie_merge/ tests/'
+      - '{{.VENV_BIN}}/isort movie_merge/'
 
   lint:mypy:
-    internal: true
+    internal: false
     desc: Run type checking with mypy
     cmds:
-      - '{{.VENV_BIN}}/mypy movie_merge/ tests/'
+      - '{{.VENV_BIN}}/mypy movie_merge/'
 
   lint:pylint:
-    internal: true
+    internal: false
     desc: Run pylint
     cmds:
-      - '{{.VENV_BIN}}/pylint movie_merge/ tests/'
+      - '{{.VENV_BIN}}/pylint movie_merge/'

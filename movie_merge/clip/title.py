@@ -1,18 +1,41 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+"""Title card generation functionality using MoviePy."""
 
-import numpy as np
-from PIL import Image, ImageColor, ImageDraw, ImageFont
+import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.fx.CrossFadeIn import CrossFadeIn
+from moviepy.video.fx.CrossFadeOut import CrossFadeOut
+from moviepy.video.fx.FadeIn import FadeIn
+from moviepy.video.fx.FadeOut import FadeOut
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.video.VideoClip import ColorClip, TextClip
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TitleConfig:
-    """Configuration for title card appearance."""
+    """Configuration for title card appearance.
 
-    font: str = "Arial"  # Font name. Overrides the TitleCardConfig font.
-    font_size: int = 70  # Font size for title text.
-    font_color: str = "white"  # Font color for title text.
-    font_shadow: bool = True  # Add shadow to text
+    Attributes:
+        font: Font name (e.g., "Arial", "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf")
+        font_size: Font size in pixels
+        font_color: Font color (e.g., "white", "black", "#FF0000")
+        font_shadow: Whether to add shadow effect
+        kerning: Letter spacing (positive=wider, negative=tighter)
+        interline: Line spacing (positive=wider, negative=tighter)
+    """
+
+    font: str = "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf"
+    font_size: int = 70
+    font_color: str = "white"
+    font_shadow: bool = True
+    kerning: Optional[int] = None
+    interline: Optional[int] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -21,18 +44,32 @@ class TitleConfig:
             "font_size": self.font_size,
             "font_color": self.font_color,
             "font_shadow": self.font_shadow,
+            "kerning": self.kerning,
+            "interline": self.interline,
         }
 
 
 @dataclass
 class DescriptionConfig:
-    """Configuration for description card appearance."""
+    """Configuration for description card appearance.
 
-    font: str = "Arial"  # Font name. Overrides the TitleCardConfig font.
-    font_size: int = 40  # Font size for description text.
-    font_color: str = "white"  # Font color for description text.
-    offset: int = 50  # Y offset from title position
-    font_shadow: bool = True  # Add shadow to text
+    Attributes:
+        font: Font name (e.g., "Arial", "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf")
+        font_size: Font size in pixels
+        font_color: Font color (e.g., "white", "black", "#FF0000")
+        offset: Vertical offset from title in pixels
+        font_shadow: Whether to add shadow effect
+        kerning: Letter spacing (positive=wider, negative=tighter)
+        interline: Line spacing (positive=wider, negative=tighter)
+    """
+
+    font: str = "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf"
+    font_size: int = 50
+    font_color: str = "white"
+    offset: int = 50
+    font_shadow: bool = True
+    kerning: Optional[int] = None
+    interline: Optional[int] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -42,19 +79,30 @@ class DescriptionConfig:
             "font_color": self.font_color,
             "offset": self.offset,
             "font_shadow": self.font_shadow,
+            "kerning": self.kerning,
+            "interline": self.interline,
         }
 
 
 @dataclass
 class TitleCardConfig:
-    """Configuration for title card appearance."""
+    """Configuration for title card appearance.
+
+    Attributes:
+        title: Title text configuration
+        description: Description text configuration
+        fade_duration: Duration of fade-in effect in seconds
+        duration: Total duration of title card in seconds
+        position: Position of the title card ("center", "center")
+        background_opacity: Opacity of the background (0.0 to 1.0). Set to 0 to disable.
+    """
 
     title: TitleConfig = field(default_factory=TitleConfig)
     description: DescriptionConfig = field(default_factory=DescriptionConfig)
-    fade_duration: float = 2.0  # Duration of fade in seconds
-    duration: float = 7.0  # Total duration of title card
+    fade_duration: float = 2.0
+    duration: float = 7.0
     position: Tuple[str, str] = ("center", "center")
-    fps: int = 30  # Frames per second for fade effect
+    background_opacity: float = 0
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -64,154 +112,187 @@ class TitleCardConfig:
             "fade_duration": self.fade_duration,
             "duration": self.duration,
             "position": self.position,
-            "fps": self.fps,
+            "background_opacity": self.background_opacity,
         }
 
 
 class TitleCardGenerator:
+    """Generates title cards using MoviePy."""
+
     def __init__(self):
-        self._cache = {}
+        """Initialize the title card generator."""
+        logger.debug("Initializing TitleCardGenerator")
+        self._video: Optional[VideoFileClip] = None
+        self._final: Optional[CompositeVideoClip] = None
 
-    def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
-        if size not in self._cache:
-            try:
-                self._cache[size] = ImageFont.load_default()
-            except Exception:
-                self._cache[size] = ImageFont.load_default()
-        return self._cache[size]
+    def _build_text_args(self, text: str, config_section: Any) -> Dict[str, Any]:
+        """Build text clip arguments from configuration."""
+        args = {
+            "text": text,
+            "font_size": config_section.font_size,
+            "color": config_section.font_color,
+            # "font": config_section.font,
+            "font": "/usr/share/fonts/ubuntu-family/Ubuntu-M.ttf",
+            "size": self._video.size if self._video else (1920, 1080),
+        }
+        return args
 
-    def _add_text_with_shadow(
-        self,
-        draw: ImageDraw.ImageDraw,
-        position: Tuple[int, int],
-        text: str,
-        font: ImageFont.FreeTypeFont,
-        text_color: str = "white",
-        shadow_color: str = "black",
-        shadow_offset: int = 3,
-        alpha: int = 255,
-    ) -> None:
-        base_image = draw.im
-        result = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+    def _create_background(self, config) -> ColorClip:
+        """Create semi-transparent background clip.
 
-        # Create shadow
-        shadow = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
-        shadow_draw = ImageDraw.Draw(shadow)
-        shadow_pos = (position[0] + shadow_offset, position[1] + shadow_offset)
-        shadow_rgba = (*ImageColor.getrgb(shadow_color), alpha)
-        shadow_draw.text(shadow_pos, text, font=font, fill=shadow_rgba)
+        Args:
+            config: Title card configuration
 
-        # Create text
-        text_layer = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
-        text_draw = ImageDraw.Draw(text_layer)
-        text_rgba = (*ImageColor.getrgb(text_color), alpha)
-        text_draw.text(position, text, font=font, fill=text_rgba)
+        Returns:
+            ColorClip with fade effects
+        """
+        # First make a ColorClip with the size & color you want.
+        bg = ColorClip(size=self._video.size, color=(0, 0, 0))
+        # Then set its total duration.
+        bg = bg.with_duration(config.duration)
+        # Then apply a standard fade in/out if you want color-based fading:
+        bg = FadeIn(config.fade_duration)(bg)
+        bg = FadeOut(config.fade_duration)(bg)
 
-        # Composite layers
-        result = Image.alpha_composite(result, shadow)
-        result = Image.alpha_composite(result, text_layer)
-        base_image.paste(result, (0, 0))
+        # Finally, set its opacity. (You can do this earlier, but this is a clear place.)
+        # “with_opacity()” is the new method for setting alpha in MoviePy 2.x
+        bg = bg.with_opacity(config.background_opacity)
 
-    def generate_frame(
-        self,
-        width: int,
-        height: int,
-        title: str,
-        opacity: float = 1.0,
-        description: Optional[str] = None,
-        config: Optional[TitleCardConfig] = None,
-    ) -> Image.Image:
-        if config is None:
-            config = TitleCardConfig()
+        return bg
 
-        # Create base transparent image
-        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
+    def _create_text_clip(
+        self, text: str, config_section: Any, config: Any, y_position: Optional[int] = None
+    ) -> TextClip:
+        """Create and return a text clip with fade effects."""
+        text_args = self._build_text_args(text, config_section)
+        clip = TextClip(**text_args)
 
-        # Calculate text positions
-        title_font = self._get_font(config.title.font_size)
-        desc_font = self._get_font(config.description.font_size)
-
-        title_bbox = draw.textbbox((0, 0), title, font=title_font)
-        title_width = title_bbox[2] - title_bbox[0]
-        title_height = title_bbox[3] - title_bbox[1]
-
-        title_x = (width - title_width) // 2
-        title_y = (height - title_height) // 2
-
-        # Calculate alpha for fade effect
-        alpha = max(0, min(255, int(255 * opacity)))
-
-        # Handle description positioning and rendering
-        if description:
-            desc_bbox = draw.textbbox((0, 0), description, font=desc_font)
-            desc_width = desc_bbox[2] - desc_bbox[0]
-            desc_height = desc_bbox[3] - desc_bbox[1]
-
-            title_y -= (desc_height + config.description.offset) // 2
-            desc_x = (width - desc_width) // 2
-            desc_y = title_y + title_height + config.description.offset
-
-            if config.description.font_shadow:
-                self._add_text_with_shadow(
-                    draw,
-                    (desc_x, desc_y),
-                    description,
-                    desc_font,
-                    config.description.font_color,
-                    shadow_color="black",
-                    shadow_offset=3,
-                    alpha=alpha,
-                )
-            else:
-                text_color = ImageColor.getrgb(config.description.font_color)
-                text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-                text_draw = ImageDraw.Draw(text_layer)
-                text_draw.text(
-                    (desc_x, desc_y), description, font=desc_font, fill=(*text_color, alpha)
-                )
-                image.alpha_composite(text_layer)
-
-        # Render title
-        if config.title.font_shadow:
-            self._add_text_with_shadow(
-                draw,
-                (title_x, title_y),
-                title,
-                title_font,
-                config.title.font_color,
-                shadow_color="black",
-                shadow_offset=3,
-                alpha=alpha,
-            )
+        # Figure out position
+        if y_position is None:
+            position = "center"
         else:
-            text_color = ImageColor.getrgb(config.title.font_color)
-            text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-            text_draw = ImageDraw.Draw(text_layer)
-            text_draw.text((title_x, title_y), title, title_font, fill=(*text_color, alpha))
-            image.alpha_composite(text_layer)
+            center_y = self._video.size[1] // 2
+            adjusted_y = center_y + config_section.offset
+            position = ("center", adjusted_y)
 
-        return image
+        # 1) Set duration
+        clip = clip.with_duration(config.duration)
+        # 2) Set position
+        clip = clip.with_position(position)
+        # 3) Apply crossfade in/out
+        clip = CrossFadeIn(config.fade_duration).apply(clip)
+        clip = CrossFadeOut(config.fade_duration).apply(clip)
 
-    def generate_fade_sequence(
+        return clip
+
+    def _cleanup(self, clips: list) -> None:
+        """Clean up video clips.
+
+        Args:
+            clips: List of clips to close
+        """
+        logger.debug("Cleaning up resources")
+        for clip in clips:
+            if clip:
+                try:
+                    clip.close()
+                except Exception as e:
+                    logger.warning(f"Error closing clip: {e}")
+
+    def generate_title_sequence(
         self,
-        width: int,
-        height: int,
+        input_file: Path,
+        output_file: Path,
         title: str,
         description: Optional[str] = None,
         config: Optional[TitleCardConfig] = None,
-    ) -> List[Image.Image]:
-        if config is None:
-            config = TitleCardConfig()
+        threads: int = 4,
+        fps: float = 30.0,
+    ) -> None:
+        """Generate a title sequence for a video.
 
-        frames = []
-        num_fade_frames = int(config.fade_duration * config.fps)
+        Args:
+            input_file: Path to input video file
+            output_file: Path to output video file
+            title: Title text to display
+            description: Optional description text
+            config: Title card configuration
+            threads: Number of threads to use for processing
 
-        for i in range(num_fade_frames):
-            opacity = i / num_fade_frames
-            frame = self.generate_frame(
-                width, height, title, opacity=opacity, description=description, config=config
+        Raises:
+            RuntimeError: If video processing fails
+        """
+        clips_to_close = []
+        try:
+            if config is None:
+                config = TitleCardConfig()
+
+            logger.info(f"Generating title sequence for: {title}")
+            logger.debug(f"Title configuration: {config.to_dict()}")
+
+            # Load the video
+            self._video = VideoFileClip(str(input_file))
+            clips_to_close.append(self._video)
+            logger.debug(
+                f"Loaded video: {input_file} ({self._video.size[0]}x{self._video.size[1]})"
             )
-            frames.append(frame)
 
-        return frames
+            # Create clips list starting with video
+            clips = [self._video]
+
+            # Add semi-transparent background if enabled
+            if config.background_opacity > 0:
+                bg = self._create_background(config)
+                clips_to_close.append(bg)
+                clips.append(bg)
+
+            # Create title clip with fade effects
+            logger.debug(f"Adding title: {title}")
+            title_clip = self._create_text_clip(title, config.title, config)
+            clips_to_close.append(title_clip)
+            clips.append(title_clip)
+
+            # Add description if provided
+            if description:
+                logger.debug(f"Adding description: {description}")
+                desc_clip = self._create_text_clip(
+                    description,
+                    config.description,
+                    config,
+                    y_position=1,  # Any non-None value will trigger the positioning logic
+                )
+                clips_to_close.append(desc_clip)
+                clips.append(desc_clip)
+
+            # Combine all clips
+            logger.debug("Compositing video clips")
+            self._final = CompositeVideoClip(clips)
+            clips_to_close.append(self._final)
+
+            logger.debug(f"Threads: {threads}, FPS: {fps}")
+
+            # Write to file
+            logger.info(f"Writing title sequence to: {output_file}")
+            self._final.write_videofile(
+                str(output_file),
+                fps=fps,
+                codec="libx264",
+                audio_codec="aac",
+                preset="medium",
+                threads=threads,
+                logger=None,  # Disable moviepy's internal logging
+            )
+
+            logger.info("Successfully generated title sequence")
+
+        except Exception as e:
+            logger.error(f"Failed to generate title sequence: {str(e)}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.exception("Traceback:")
+            raise RuntimeError(f"Failed to generate title sequence: {str(e)}") from e
+
+        finally:
+            # Clean up all resources
+            self._cleanup(clips_to_close)
+            self._video = None
+            self._final = None

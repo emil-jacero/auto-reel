@@ -1,4 +1,4 @@
-""" Project module. """
+"""Project module."""
 
 from .processor import Project
 

@@ -3,8 +3,9 @@ import os
 from pathlib import Path
 from typing import List, Union
 
-from .exceptions import FileError
 from movie_merge.constants import IGNORE_FILE, VIDEO_EXTENSIONS
+
+from .exceptions import FileError
 
 logger = logging.getLogger(__name__)
 

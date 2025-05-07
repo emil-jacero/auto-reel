@@ -1,4 +1,5 @@
 """Main project processing functionality."""
+
 import json
 import logging
 import shutil
@@ -19,14 +20,7 @@ class Project:
     """Handles high-level project processing and directory scanning."""
 
     def __init__(self, config: ProcessingConfig):
-        """Initialize project processor.
-
-        Args:
-            config: Processing configuration
-
-        Raises:
-            DirectoryParseError: If root directory does not exist
-        """
+        """Initialize project processor."""
         self.config = config
 
         if not self.config.input_path.exists():
@@ -40,14 +34,7 @@ class Project:
             verify_writeable_directory(config.options.temp_dir, create=True)
 
     def scan_year(self, year: str) -> Generator[Tuple[Path, DirectoryConfig], None, None]:
-        """Scan a specific year directory for event folders.
-
-        Args:
-            year: Year to scan (YYYY)
-
-        Yields:
-            Tuple of (directory path, directory configuration)
-        """
+        """Scan a specific year directory for event folders."""
         year_dir = self.config.input_path / year
         if not year_dir.exists():
             logger.warning(f"Year directory does not exist: {year_dir}")
@@ -70,11 +57,7 @@ class Project:
                 continue
 
     def process(self, year: str) -> None:
-        """Process all events for a specific year sequentially.
-
-        Args:
-            year: Year to process (YYYY)
-        """
+        """Process all events for a specific year sequentially."""
         logger.info(f"Processing year: {year}")
 
         # Create year output directory
@@ -91,15 +74,7 @@ class Project:
                     logger.exception("Traceback:")
 
     def _process_directory(self, directory: Path, dir_config: DirectoryConfig) -> None:
-        """Process a single event directory.
-
-        Args:
-            directory: Directory to process
-            dir_config: Directory configuration
-
-        Raises:
-            ProcessingError: If directory processing fails
-        """
+        """Process a single event directory."""
         logger.info(f"Processing directory: {directory}")
 
         if self.config.options.dry_run:
@@ -110,21 +85,30 @@ class Project:
             # Create movie processor
             movie = Movie(directory, self.config, dir_config)
 
-            # Scan for video files
+            # Determine the output file path
+            output_file = self.config.output_path / str(movie.metadata.year) / f"{movie.title}.mp4"
+
+            # Check if the output file already exists
+            if output_file.exists() and not self.config.options.overwrite:
+                logger.info(f"Output file already exists and overwrite is disabled: {output_file}")
+                logger.info(f"Skipping processing of {directory}")
+                return
+
+            # Create output directory if needed
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+
+            if self.config.options.dry_run:
+                logger.info(f"Dry run - would process {directory}")
+                if output_file.exists():
+                    logger.info(f"Would overwrite existing file: {output_file}")
+                return
+
+            # Scan for video files and process
             movie.process()
 
             if not movie.clips and not movie.chapters:
                 logger.warning(f"No video files found in {directory}")
                 return
-
-            output_file = (
-                self.config.output_path
-                / str(movie.metadata.year)
-                / f"{movie.metadata.date.strftime('%Y-%m-%d')} - {movie.title}.mp4"
-            )
-
-            # Create output directory if needed
-            output_file.parent.mkdir(parents=True, exist_ok=True)
 
             # Compile movie
             movie.make(output_file)

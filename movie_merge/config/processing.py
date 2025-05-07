@@ -1,4 +1,4 @@
-""" Configuration classes for video processing. """
+"""Configuration classes for video processing."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,12 +63,13 @@ class EncodingConfig:
 class ProcessingOptions:
     """General processing options."""
 
-    threads: int = 1
+    threads: int = 2
     target_resolution: Tuple[int, int] = (1920, 1080)
     temp_dir: Optional[Path] = None
     chunk_size: int = 1024 * 1024  # 1MB chunks for file operations
     dry_run: bool = False
     log_level: str = "DEBUG"
+    overwrite: bool = False  # Whether to overwrite existing output files
 
     def __post_init__(self):
         """Validate processing options."""

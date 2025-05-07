@@ -1,4 +1,4 @@
-""" Enumerations for video and audio codecs. """
+"""Enumerations for video and audio codecs."""
 
 from enum import Enum
 from typing import Dict, List

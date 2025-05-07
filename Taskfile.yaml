@@ -22,26 +22,16 @@ vars:
 
   # Docker-specific variables
   CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
-  IMG: '{{.IMG | default "movie-merge:dev"}}'
+  IMG: '{{.IMG | default "auto-reel:dev"}}'
 
   # Build variables
   BUILD_PLATFORM: '{{.BUILD_PLATFORM | default "linux/amd64"}}'
-
-  # Concatenation variables
-  CONCAT_EXCLUDE: '**__pycache__,*.pyc'
-  CONCAT_INCLUDE: 'movie_merge/**,pyproject.toml,Dockerfile,README.md,Taskfile.yaml'
-  # .pre-commit-config.yaml,.github/**,tests/**
 
 tasks:
   default:
     cmds:
       - task --list-all
     silent: true
-
-  concat:
-    desc: Concatenate project files based on include and exclude patterns
-    cmds:
-      - '$HOME/.local/bin/concat -e "{{.CONCAT_EXCLUDE}}" -i "{{.CONCAT_INCLUDE}}" -d {{.ROOT_DIR}} -o output_movie-merge.txt'
 
   setup:
     desc: Setup development environment
@@ -163,7 +153,8 @@ tasks:
       YEAR: '{{.YEAR | default 2024}}'
       USE_GPU: '{{.USE_GPU | default "true"}}'
       GPU_QUALITY: '{{.GPU_QUALITY | default "20"}}'
-      THREADS: '{{.THREADS | default 8}}'
+      THREADS: '{{.THREADS | default 10}}'
+      VIDEO_CODEC: '{{.VIDEO_CODEC | default "H264_NVENC"}}'
     env:
       PYTHONPATH: '{{.PROJECT_ROOT}}'
     cmds:
@@ -176,6 +167,7 @@ tasks:
           --log-level DEBUG \
           {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
           --gpu-quality {{.GPU_QUALITY}} \
+          --video-codec {{.VIDEO_CODEC}} \
           {{.CLI_ARGS}}
 
   docs:

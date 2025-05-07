@@ -89,7 +89,6 @@ def parse_args() -> argparse.Namespace:
         help="Target resolution in format WIDTHxHEIGHT (default: 1920x1080)",
     )
 
-    # Add GPU-related arguments
     parser.add_argument(
         "--use-gpu", action="store_true", help="Enable NVIDIA GPU acceleration if available"
     )
@@ -103,10 +102,8 @@ def parse_args() -> argparse.Namespace:
         help="GPU encoding quality (0-51, lower is better, default: 20)",
     )
 
-    # Get codec descriptions
     video_descs, audio_descs = _get_codec_descriptions()
 
-    # Add codec selection arguments with enhanced help
     parser.add_argument(
         "--video-codec",
         choices=[codec.name for codec in VideoCodec],
@@ -121,6 +118,12 @@ def parse_args() -> argparse.Namespace:
         default="AAC",
         help=create_codec_help(AudioCodec, audio_descs),
         metavar="CODEC",
+    )
+
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing output files if they exist (default: False)",
     )
 
     return parser.parse_args()
@@ -180,6 +183,7 @@ def process_videos_by_years(args: argparse.Namespace) -> None:
             temp_dir=Path(args.temp_dir) if args.temp_dir else Path(args.output_dir) / "temp",
             dry_run=args.dry_run,
             log_level=args.log_level,
+            overwrite=args.overwrite,
         ),
     )
 

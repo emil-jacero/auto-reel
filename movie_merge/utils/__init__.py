@@ -2,14 +2,14 @@
 
 from .exceptions import FileError
 from .file import (
-    should_ignore_directory,
-    validate_path,
+    copy_with_progress,
     get_file_extension,
     is_video_file,
     list_video_files,
-    safe_filename,
-    copy_with_progress,
     move_with_progress,
+    safe_filename,
+    should_ignore_directory,
+    validate_path,
     verify_writeable_directory,
 )
 from .logging import ColorFormatter, configure_logging, log_exception
