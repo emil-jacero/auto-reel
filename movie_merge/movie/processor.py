@@ -192,11 +192,7 @@ class Movie:
         logger.debug("Chapters: " + ", ".join(chapter.title for chapter in self.chapters))
 
     def process(self):
-        """Process movie clips and create title cards.
-
-        Processes each chapter and creates title cards for the first clip.
-        Converts all clips to MP4 format if needed.
-        """
+        """Process movie clips and create title cards."""
         # Scan directory for clips and organize into chapters
         self.scan_directory()
 
@@ -216,7 +212,7 @@ class Movie:
         for chapter in self.chapters:
             for clip in chapter.clips:
                 # Convert video to MP4 format
-                clip.convert_to_mp4()
+                clip.convert_to_mp4(target_fps=self.target_fps)
 
                 # Create title card for the first clip in each chapter
                 if clip.is_title:
@@ -224,19 +220,22 @@ class Movie:
                     chapter_title_config = self.dir_config.title_config
                     chapter_title_config.fps = self.target_fps
 
-                    # Create title with matching FPS
+                    # Create title with matching FPS, using short segment
                     title_clip = clip.create_title(
-                        chapter.title, chapter.description, title_config=chapter_title_config
+                        chapter.title,
+                        chapter.description,
+                        title_config=chapter_title_config,
+                        use_segment=True
                     )
                     chapter.clips[0] = title_clip
+                    # Mark the clip as a title clip
+                    chapter.clips[0].is_title_clip = True
 
         # Flatten all clips into single list
         for chapter in self.chapters:
             self.clips.extend(chapter.clips)
 
         logger.info(f"Processed {len(self.clips)} clips in total using {self.target_fps} FPS")
-        logger.debug(f"Movie title: {self.title}")
-        logger.debug(f"Movie description: {self.description}")
 
     def make(self, output_file: Path):
         """Compile movie clips into a single video file."""
@@ -248,18 +247,55 @@ class Movie:
         logger.info(f"Using target framerate: {self.target_fps} FPS")
 
         try:
+            # Prepare clips for merging
+            final_clips = []
+            temp_files = []
+
+            for clip in self.clips:
+                # For title clips, we need to handle them differently
+                if hasattr(clip, 'is_title_clip') and clip.is_title_clip and hasattr(clip, 'original_path'):
+                    # For title clips, we use the processed clip which contains only the title segment
+                    final_clips.append(clip.path)
+
+                    # Also add the rest of the original clip if it's longer than the title duration
+                    original_clip = clip.original_path
+                    title_duration = getattr(clip, 'title_duration',
+                                            clip.dir_config.title_config.duration +
+                                            2 * clip.dir_config.title_config.fade_duration)
+
+                    # Check if original clip is longer than title duration
+                    original_metadata = clip._extract_metadata(original_clip)
+                    if original_metadata and original_metadata.duration > title_duration:
+                        # Create a temporary clip with the remainder
+                        temp_remainder = self.proc_config.options.temp_dir / f"remainder_{original_clip.name}"
+
+                        # Extract the remainder using ffmpeg
+                        cmd = [self._ffmpeg.ffmpeg_path, "-y",
+                            "-i", str(original_clip),
+                            "-ss", str(title_duration),
+                            "-c", "copy",
+                            str(temp_remainder)]
+
+                        if not self.proc_config.options.dry_run:
+                            self._ffmpeg._run_command(cmd)
+                            final_clips.append(temp_remainder)
+                            temp_files.append(temp_remainder)
+                else:
+                    # For regular clips, use them as is
+                    final_clips.append(clip.path)
+
             # Build ffmpeg command with complex filter for concatenation
             cmd = [self._ffmpeg.ffmpeg_path, "-y"]
 
             # Add input files
-            for clip in self.clips:
-                cmd.extend(["-i", str(clip.path)])
+            for path in final_clips:
+                cmd.extend(["-i", str(path)])
 
             # Build filter complex string for proper concatenation
             filter_complex = []
 
             # Process each input stream
-            for i in range(len(self.clips)):
+            for i in range(len(final_clips)):
                 # Scale and set framerate for video
                 width, height = self.proc_config.options.target_resolution
                 filter_complex.append(
@@ -272,15 +308,19 @@ class Movie:
                 )
 
             # Collect all normalized streams for concat
-            video_streams = "".join(f"[v{i}]" for i in range(len(self.clips)))
-            audio_streams = "".join(f"[a{i}]" for i in range(len(self.clips)))
+            video_streams = ''.join(f'[v{i}]' for i in range(len(final_clips)))
+            audio_streams = ''.join(f'[a{i}]' for i in range(len(final_clips)))
 
             # Add concat filters
-            filter_complex.append(f"{video_streams}concat=n={len(self.clips)}:v=1:a=0[vout]")
-            filter_complex.append(f"{audio_streams}concat=n={len(self.clips)}:v=0:a=1[aout]")
+            filter_complex.append(
+                f"{video_streams}concat=n={len(final_clips)}:v=1:a=0[vout]"
+            )
+            filter_complex.append(
+                f"{audio_streams}concat=n={len(final_clips)}:v=0:a=1[aout]"
+            )
 
             # Add the complete filter complex to the command
-            cmd.extend(["-filter_complex", ";".join(filter_complex)])
+            cmd.extend(["-filter_complex", ';'.join(filter_complex)])
 
             # Map output streams
             cmd.extend(["-map", "[vout]", "-map", "[aout]"])
@@ -288,52 +328,31 @@ class Movie:
             # Video codec settings
             if self.proc_config.encoding.video_codec.is_gpu_codec:
                 # NVENC specific settings
-                cmd.extend(
-                    [
-                        "-c:v",
-                        self.proc_config.encoding.video_codec.value,
-                        "-rc:v",
-                        "vbr",  # Variable bitrate mode
-                        "-cq:v",
-                        str(self.proc_config.encoding.crf),
-                        "-b:v",
-                        "0",  # Let VBR mode handle bitrate
-                        "-maxrate:v",
-                        "100M",
-                        "-profile:v",
-                        "high",
-                        "-tune",
-                        "hq",  # High quality tuning
-                        "-preset",
-                        "p1",  # Adjust preset as needed
-                    ]
-                )
+                cmd.extend([
+                    "-c:v", self.proc_config.encoding.video_codec.value,
+                    "-rc:v", "vbr",        # Variable bitrate mode
+                    "-cq:v", str(self.proc_config.encoding.crf),
+                    "-b:v", "0",           # Let VBR mode handle bitrate
+                    "-maxrate:v", "100M",
+                    "-profile:v", "high",
+                    "-tune", "hq",         # High quality tuning
+                    "-preset", "p1"        # Adjust preset as needed
+                ])
             else:
                 # CPU encoding settings
-                cmd.extend(
-                    [
-                        "-c:v",
-                        self.proc_config.encoding.video_codec.value,
-                        "-crf",
-                        str(self.proc_config.encoding.crf),
-                        "-preset",
-                        self.proc_config.encoding.preset,
-                    ]
-                )
+                cmd.extend([
+                    "-c:v", self.proc_config.encoding.video_codec.value,
+                    "-crf", str(self.proc_config.encoding.crf),
+                    "-preset", self.proc_config.encoding.preset
+                ])
 
             # Audio codec settings
-            cmd.extend(
-                [
-                    "-c:a",
-                    self.proc_config.encoding.audio_codec.value,
-                    "-b:a",
-                    "192k",
-                    "-ar",
-                    "48000",
-                    "-ac",
-                    "2",
-                ]
-            )
+            cmd.extend([
+                "-c:a", self.proc_config.encoding.audio_codec.value,
+                "-b:a", "192k",
+                "-ar", "48000",
+                "-ac", "2"
+            ])
 
             # Add output file
             cmd.append(str(output_file))
@@ -345,6 +364,14 @@ class Movie:
                 logger.debug(f"Running ffmpeg command: {' '.join(cmd)}")
                 self._ffmpeg._run_command(cmd)
                 logger.info(f"Successfully created movie: {output_file}")
+
+                # Clean up temporary files
+                for temp_file in temp_files:
+                    try:
+                        Path(temp_file).unlink()
+                        logger.debug(f"Removed temporary file: {temp_file}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temporary file {temp_file}: {e}")
             else:
                 logger.info(f"Would create movie: {output_file}")
 

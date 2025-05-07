@@ -2,6 +2,7 @@
 
 import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -199,6 +200,47 @@ class TitleCardGenerator:
                 except Exception as e:
                     logger.warning(f"Error closing clip: {e}")
 
+    def extract_title_segment(
+        self,
+        input_file: Path,
+        output_file: Path,
+        duration: float,
+        threads: int = 4
+    ) -> None:
+        """Extract a segment from the beginning of a video for title overlay.
+
+        Args:
+            input_file: Path to input video file
+            output_file: Path to output video file
+            duration: Duration in seconds to extract
+            threads: Number of threads to use for processing
+        """
+        try:
+            logger.info(f"Extracting {duration}s segment from: {input_file}")
+
+            # Use ffmpeg to extract the segment
+            cmd = [
+                self._ffmpeg.ffmpeg_path if hasattr(self, '_ffmpeg') else "ffmpeg",
+                "-y",
+                "-i", str(input_file),
+                "-ss", "0",
+                "-t", str(duration),
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-preset", "ultrafast",  # Use ultrafast preset for temporary clip
+                "-threads", str(threads),
+                str(output_file)
+            ]
+
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            logger.info(f"Successfully extracted title segment to {output_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to extract title segment: {str(e)}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.exception("Traceback:")
+            raise RuntimeError(f"Failed to extract title segment: {str(e)}") from e
+
     def generate_title_sequence(
         self,
         input_file: Path,
@@ -208,34 +250,37 @@ class TitleCardGenerator:
         config: Optional[TitleCardConfig] = None,
         threads: int = 4,
         fps: float = 30.0,
+        use_segment: bool = True
     ) -> None:
-        """Generate a title sequence for a video.
-
-        Args:
-            input_file: Path to input video file
-            output_file: Path to output video file
-            title: Title text to display
-            description: Optional description text
-            config: Title card configuration
-            threads: Number of threads to use for processing
-
-        Raises:
-            RuntimeError: If video processing fails
-        """
+        """Generate a title sequence for a video."""
         clips_to_close = []
+        temp_segment_file = None
+
         try:
             if config is None:
                 config = TitleCardConfig()
 
             logger.info(f"Generating title sequence for: {title}")
-            logger.debug(f"Title configuration: {config.to_dict()}")
 
-            # Load the video
-            self._video = VideoFileClip(str(input_file))
+            # Calculate total duration needed
+            total_duration = config.duration + config.fade_duration * 2
+
+            # Use a short segment if requested
+            working_input = input_file
+            if use_segment:
+                # Create temporary file for the segment
+                temp_segment_file = output_file.with_name(f"temp_segment_{output_file.name}")
+                self.extract_title_segment(
+                    input_file=input_file,
+                    output_file=temp_segment_file,
+                    duration=total_duration,
+                    threads=threads
+                )
+                working_input = temp_segment_file
+
+            # Load the video (either full or segment)
+            self._video = VideoFileClip(str(working_input))
             clips_to_close.append(self._video)
-            logger.debug(
-                f"Loaded video: {input_file} ({self._video.size[0]}x{self._video.size[1]})"
-            )
 
             # Create clips list starting with video
             clips = [self._video]
@@ -259,7 +304,7 @@ class TitleCardGenerator:
                     description,
                     config.description,
                     config,
-                    y_position=1,  # Any non-None value will trigger the positioning logic
+                    y_position=1  # Any non-None value will trigger positioning logic
                 )
                 clips_to_close.append(desc_clip)
                 clips.append(desc_clip)
@@ -276,11 +321,11 @@ class TitleCardGenerator:
             self._final.write_videofile(
                 str(output_file),
                 fps=fps,
-                codec="libx264",
-                audio_codec="aac",
-                preset="medium",
+                codec='libx264',
+                audio_codec='aac',
+                preset='medium',
                 threads=threads,
-                logger=None,  # Disable moviepy's internal logging
+                logger=None  # Disable moviepy's internal logging
             )
 
             logger.info("Successfully generated title sequence")
@@ -292,7 +337,13 @@ class TitleCardGenerator:
             raise RuntimeError(f"Failed to generate title sequence: {str(e)}") from e
 
         finally:
-            # Clean up all resources
+            # Clean up resources
             self._cleanup(clips_to_close)
-            self._video = None
-            self._final = None
+
+            # Remove temporary segment if created
+            if temp_segment_file and Path(temp_segment_file).exists():
+                try:
+                    Path(temp_segment_file).unlink()
+                    logger.debug(f"Removed temporary segment file: {temp_segment_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary segment file: {e}")
