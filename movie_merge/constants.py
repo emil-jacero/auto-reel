@@ -35,6 +35,6 @@ VIDEO_EXTENSIONS = {
     ".ogv",  # Ogg Video
 }
 
-IGNORE_FILE = ".mmignore"
+IGNORE_FILE = ".reelignore"
 
 METADATA_FILE = "reel.yaml"

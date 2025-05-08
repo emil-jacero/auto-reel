@@ -88,6 +88,7 @@ class ProcessingOptions:
             "chunk_size": self.chunk_size,
             "dry_run": self.dry_run,
             "log_level": self.log_level,
+            "overwrite": self.overwrite,
         }
 
 

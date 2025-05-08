@@ -121,7 +121,6 @@ class Movie:
                         logger.debug(
                             f"Clip metadata: {json.dumps(clip.to_dict(), indent=2, ensure_ascii=False)}"
                         )
-                        # logger.debug(f"Clip metadata: {clip.to_dict()}")
 
                         # Add clip to list
                         clips.append(clip)
@@ -225,7 +224,7 @@ class Movie:
                         chapter.title,
                         chapter.description,
                         title_config=chapter_title_config,
-                        use_segment=True
+                        use_segment=True,
                     )
                     chapter.clips[0] = title_clip
                     # Mark the clip as a title clip
@@ -253,28 +252,41 @@ class Movie:
 
             for clip in self.clips:
                 # For title clips, we need to handle them differently
-                if hasattr(clip, 'is_title_clip') and clip.is_title_clip and hasattr(clip, 'original_path'):
-                    # For title clips, we use the processed clip which contains only the title segment
+                if (
+                    hasattr(clip, "is_title_clip")
+                    and clip.is_title_clip
+                    and hasattr(clip, "original_path")
+                ):
+                    # Add the title segment
                     final_clips.append(clip.path)
+                    temp_files.append(clip.path)
 
-                    # Also add the rest of the original clip if it's longer than the title duration
                     original_clip = clip.original_path
-                    title_duration = getattr(clip, 'title_duration',
-                                            clip.dir_config.title_config.duration +
-                                            2 * clip.dir_config.title_config.fade_duration)
-
-                    # Check if original clip is longer than title duration
                     original_metadata = clip._extract_metadata(original_clip)
-                    if original_metadata and original_metadata.duration > title_duration:
-                        # Create a temporary clip with the remainder
-                        temp_remainder = self.proc_config.options.temp_dir / f"remainder_{original_clip.name}"
 
-                        # Extract the remainder using ffmpeg
-                        cmd = [self._ffmpeg.ffmpeg_path, "-y",
-                            "-i", str(original_clip),
-                            "-ss", str(title_duration),
-                            "-c", "copy",
-                            str(temp_remainder)]
+                    # Get the actual duration used in the title sequence (which contains video content)
+                    # We need to get this from the title segment itself, not from the configuration
+                    used_duration = clip.metadata.duration
+
+                    if original_metadata and original_metadata.duration > used_duration:
+                        # Create temporary clip with the remainder, starting exactly where the title clip ends
+                        temp_remainder = (
+                            self.proc_config.options.temp_dir / f"remainder_{original_clip.name}"
+                        )
+
+                        cmd = [
+                            self._ffmpeg.ffmpeg_path,
+                            "-y",
+                            "-ss",
+                            str(used_duration),
+                            "-i",
+                            str(original_clip),
+                            "-c:v",
+                            self.proc_config.encoding.video_codec.value,
+                            "-c:a",
+                            self.proc_config.encoding.audio_codec.value,
+                            str(temp_remainder),
+                        ]
 
                         if not self.proc_config.options.dry_run:
                             self._ffmpeg._run_command(cmd)
@@ -308,19 +320,15 @@ class Movie:
                 )
 
             # Collect all normalized streams for concat
-            video_streams = ''.join(f'[v{i}]' for i in range(len(final_clips)))
-            audio_streams = ''.join(f'[a{i}]' for i in range(len(final_clips)))
+            video_streams = "".join(f"[v{i}]" for i in range(len(final_clips)))
+            audio_streams = "".join(f"[a{i}]" for i in range(len(final_clips)))
 
             # Add concat filters
-            filter_complex.append(
-                f"{video_streams}concat=n={len(final_clips)}:v=1:a=0[vout]"
-            )
-            filter_complex.append(
-                f"{audio_streams}concat=n={len(final_clips)}:v=0:a=1[aout]"
-            )
+            filter_complex.append(f"{video_streams}concat=n={len(final_clips)}:v=1:a=0[vout]")
+            filter_complex.append(f"{audio_streams}concat=n={len(final_clips)}:v=0:a=1[aout]")
 
             # Add the complete filter complex to the command
-            cmd.extend(["-filter_complex", ';'.join(filter_complex)])
+            cmd.extend(["-filter_complex", ";".join(filter_complex)])
 
             # Map output streams
             cmd.extend(["-map", "[vout]", "-map", "[aout]"])
@@ -328,31 +336,52 @@ class Movie:
             # Video codec settings
             if self.proc_config.encoding.video_codec.is_gpu_codec:
                 # NVENC specific settings
-                cmd.extend([
-                    "-c:v", self.proc_config.encoding.video_codec.value,
-                    "-rc:v", "vbr",        # Variable bitrate mode
-                    "-cq:v", str(self.proc_config.encoding.crf),
-                    "-b:v", "0",           # Let VBR mode handle bitrate
-                    "-maxrate:v", "100M",
-                    "-profile:v", "high",
-                    "-tune", "hq",         # High quality tuning
-                    "-preset", "p1"        # Adjust preset as needed
-                ])
+                cmd.extend(
+                    [
+                        "-c:v",
+                        self.proc_config.encoding.video_codec.value,
+                        "-rc:v",
+                        "vbr",  # Variable bitrate mode
+                        "-cq:v",
+                        str(self.proc_config.encoding.crf),
+                        "-b:v",
+                        "0",  # Let VBR mode handle bitrate
+                        "-maxrate:v",
+                        "100M",
+                        "-profile:v",
+                        "high",
+                        "-tune",
+                        "hq",  # High quality tuning
+                        "-preset",
+                        "p1",  # Adjust preset as needed
+                    ]
+                )
             else:
                 # CPU encoding settings
-                cmd.extend([
-                    "-c:v", self.proc_config.encoding.video_codec.value,
-                    "-crf", str(self.proc_config.encoding.crf),
-                    "-preset", self.proc_config.encoding.preset
-                ])
+                cmd.extend(
+                    [
+                        "-c:v",
+                        self.proc_config.encoding.video_codec.value,
+                        "-crf",
+                        str(self.proc_config.encoding.crf),
+                        "-preset",
+                        self.proc_config.encoding.preset,
+                    ]
+                )
 
             # Audio codec settings
-            cmd.extend([
-                "-c:a", self.proc_config.encoding.audio_codec.value,
-                "-b:a", "192k",
-                "-ar", "48000",
-                "-ac", "2"
-            ])
+            cmd.extend(
+                [
+                    "-c:a",
+                    self.proc_config.encoding.audio_codec.value,
+                    "-b:a",
+                    "192k",
+                    "-ar",
+                    "48000",
+                    "-ac",
+                    "2",
+                ]
+            )
 
             # Add output file
             cmd.append(str(output_file))

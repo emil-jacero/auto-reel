@@ -164,9 +164,9 @@ class Clip:
                     pass
 
             # Extract creation time
-            creation_date = self._extract_datetime_from_exiftool(file_path) or datetime.fromtimestamp(
-                file_path.stat().st_mtime
-            )
+            creation_date = self._extract_datetime_from_exiftool(
+                file_path
+            ) or datetime.fromtimestamp(file_path.stat().st_mtime)
 
             return ClipMetadata(
                 creation_date=creation_date,
@@ -195,63 +195,23 @@ class Clip:
         """Check if clip needs processing."""
         return self.path.suffix.lower() in UNSUPPORTED_VIDEO_EXTENSIONS
 
-    def _extract_metadata_from_path(self, path: Path) -> Optional[ClipMetadata]:
-        """Extract metadata from a specific video file path."""
-        try:
-            probe_data = self._ffmpeg.probe(input_file=path)
-
-            video_stream = next(
-                (s for s in probe_data["streams"] if s["codec_type"] == "video"), None
-            )
-            audio_stream = next(
-                (s for s in probe_data["streams"] if s["codec_type"] == "audio"), None
-            )
-
-            if not video_stream:
-                return None
-
-            # Calculate frame rate
-            fps = 0
-            if "avg_frame_rate" in video_stream:
-                try:
-                    num, den = map(int, video_stream["avg_frame_rate"].split("/"))
-                    fps = num / den if den != 0 else 0
-                except (ValueError, ZeroDivisionError):
-                    pass
-
-            if fps == 0 and "r_frame_rate" in video_stream:
-                try:
-                    num, den = map(int, video_stream["r_frame_rate"].split("/"))
-                    fps = num / den if den != 0 else 0
-                except (ValueError, ZeroDivisionError):
-                    pass
-
-            return ClipMetadata(
-                creation_date=datetime.now(timezone.utc),  # Just use current time
-                name=path.stem,
-                extension=str(path.suffix).lower(),
-                duration=float(probe_data["format"].get("duration", 0)),
-                frame_rate=fps,
-                video_codec=video_stream.get("codec_name", "unknown"),
-                width=int(video_stream.get("width", 0)),
-                height=int(video_stream.get("height", 0)),
-                video_bitrate=int(video_stream.get("bit_rate", 0)),
-                audio_codec=audio_stream.get("codec_name", "none") if audio_stream else "none",
-                audio_channels=int(audio_stream.get("channels", 0)) if audio_stream else 0,
-                audio_bitrate=int(audio_stream.get("bit_rate", 0)) if audio_stream else 0,
-                audio_sample_rate=int(audio_stream.get("sample_rate", 0)) if audio_stream else 0,
-                file_size=int(probe_data["format"].get("size", 0)),
-                format=probe_data["format"].get("format_name", "unknown"),
-            )
-        except Exception as e:
-            logger.debug(f"Failed to extract metadata from {path}: {e}")
-            return None
-
     def convert_to_mp4(self, target_fps: Optional[float] = None) -> "Clip":
         """Convert video file to MP4 format with optional framerate adjustment."""
+        # Skip if no processing needed and no framerate change
         if not self.needs_processing and not target_fps:
             logger.debug(f"Clip {self.path} does not need conversion")
             return self
+
+        # Skip if already MP4 with correct framerate
+        needs_framerate_adjustment = (
+            target_fps and abs(self.metadata.frame_rate - target_fps) > 0.01
+        )
+        is_already_mp4 = self.path.suffix.lower() == ".mp4"
+
+        if is_already_mp4 and not needs_framerate_adjustment:
+            logger.debug(f"Clip {self.path} already in MP4 format with correct framerate")
+            return self
+
         try:
             logger.debug(f"Converting {self.path} to MP4")
             # Create 'original' directory if needed
@@ -267,22 +227,18 @@ class Clip:
 
             if not self.proc_config.options.dry_run:
                 # Build conversion command
-                cmd = [
-                    self._ffmpeg.ffmpeg_path,
-                    "-y",
-                    "-i",
-                    str(self.path)
-                ]
+                cmd = [self._ffmpeg.ffmpeg_path, "-y", "-i", str(self.path)]
 
                 # Add framerate adjustment if needed
                 if target_fps and abs(self.metadata.frame_rate - target_fps) > 0.01:
-                    logger.info(f"Adjusting framerate from {self.metadata.frame_rate} to {target_fps}")
+                    logger.info(
+                        f"Adjusting framerate from {self.metadata.frame_rate} to {target_fps}"
+                    )
                     cmd.extend(["-r", str(target_fps)])
 
                 # Add encoding options
                 video_options = self.proc_config.encoding.video_codec.get_encoding_options(
-                    quality=self.proc_config.encoding.crf,
-                    preset=self.proc_config.encoding.preset
+                    quality=self.proc_config.encoding.crf, preset=self.proc_config.encoding.preset
                 )
 
                 cmd.extend(["-c:v", self.proc_config.encoding.video_codec.value])
@@ -301,6 +257,7 @@ class Clip:
 
                 # Move temp file to final destination
                 import shutil
+
                 shutil.move(str(temp_output), str(output_file))
 
                 # Update clip path and metadata
@@ -324,7 +281,7 @@ class Clip:
         title: str,
         description: Optional[str] = None,
         title_config: Optional[TitleCardConfig] = None,
-        use_segment: bool = True
+        use_segment: bool = True,
     ) -> "Clip":
         """Create title overlay for clip."""
         try:
@@ -340,8 +297,8 @@ class Clip:
 
             generator = TitleCardGenerator()
             output_file = (
-                self.proc_config.options.temp_dir /
-                f"{self.metadata.name}_with_title{self.path.suffix}"
+                self.proc_config.options.temp_dir
+                / f"{self.metadata.name}_with_title{self.path.suffix}"
             )
 
             # Generate the title sequence using the specified framerate
@@ -353,7 +310,8 @@ class Clip:
                 config=title_config,
                 threads=self.proc_config.options.threads,
                 fps=self.metadata.frame_rate,
-                use_segment=use_segment
+                use_segment=use_segment,
+                encoding_preset=self.proc_config.encoding.preset,
             )
 
             # Update clip path to point to new video with title

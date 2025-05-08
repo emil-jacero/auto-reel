@@ -13,7 +13,7 @@ It supports:
 
 ```bash
 clear && task run USE_GPU=true INPUT_DIR=/run/media/emil/MOL/Videos/Sorted OUTPUT_DIR=/run/media/emil/MOL/Videos/Completed-auto-reel YEAR=2017,2018,2019,2020,2021,2022,2023,2024 > output.log 2>&1
-clear && task run USE_GPU=true INPUT_DIR=/run/media/emil/MOL/Videos/Sorted OUTPUT_DIR=/run/media/emil/MOL/Videos/Completed-auto-reel YEAR=2024 > output.log 2>&1
+clear && task run USE_GPU=true INPUT_DIR=/run/media/emil/MOL/Videos/Sorted OUTPUT_DIR=/run/media/emil/MOL/Videos/Completed-auto-reel YEAR=2023 > output.log 2>&1
 
 
 clear && task run USE_GPU=false INPUT_DIR=/var/home/emil/Development/larnetio/auto-reel/hack/input OUTPUT_DIR=/var/home/emil/Development/larnetio/auto-reel/hack/output YEAR=2018

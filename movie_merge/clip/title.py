@@ -205,7 +205,8 @@ class TitleCardGenerator:
         input_file: Path,
         output_file: Path,
         duration: float,
-        threads: int = 4
+        threads: int = 4,
+        encoding_preset: str = "medium",
     ) -> None:
         """Extract a segment from the beginning of a video for title overlay.
 
@@ -220,16 +221,23 @@ class TitleCardGenerator:
 
             # Use ffmpeg to extract the segment
             cmd = [
-                self._ffmpeg.ffmpeg_path if hasattr(self, '_ffmpeg') else "ffmpeg",
+                self._ffmpeg.ffmpeg_path if hasattr(self, "_ffmpeg") else "ffmpeg",
                 "-y",
-                "-i", str(input_file),
-                "-ss", "0",
-                "-t", str(duration),
-                "-c:v", "libx264",
-                "-c:a", "aac",
-                "-preset", "ultrafast",  # Use ultrafast preset for temporary clip
-                "-threads", str(threads),
-                str(output_file)
+                "-i",
+                str(input_file),
+                "-ss",
+                "0",
+                "-t",
+                str(duration),
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-preset",
+                encoding_preset,
+                "-threads",
+                str(threads),
+                str(output_file),
             ]
 
             subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -250,7 +258,8 @@ class TitleCardGenerator:
         config: Optional[TitleCardConfig] = None,
         threads: int = 4,
         fps: float = 30.0,
-        use_segment: bool = True
+        use_segment: bool = True,
+        encoding_preset: str = "medium",
     ) -> None:
         """Generate a title sequence for a video."""
         clips_to_close = []
@@ -262,9 +271,6 @@ class TitleCardGenerator:
 
             logger.info(f"Generating title sequence for: {title}")
 
-            # Calculate total duration needed
-            total_duration = config.duration + config.fade_duration * 2
-
             # Use a short segment if requested
             working_input = input_file
             if use_segment:
@@ -273,8 +279,9 @@ class TitleCardGenerator:
                 self.extract_title_segment(
                     input_file=input_file,
                     output_file=temp_segment_file,
-                    duration=total_duration,
-                    threads=threads
+                    duration=config.duration,
+                    threads=threads,
+                    encoding_preset=encoding_preset,
                 )
                 working_input = temp_segment_file
 
@@ -304,7 +311,7 @@ class TitleCardGenerator:
                     description,
                     config.description,
                     config,
-                    y_position=1  # Any non-None value will trigger positioning logic
+                    y_position=1,  # Any non-None value will trigger positioning logic
                 )
                 clips_to_close.append(desc_clip)
                 clips.append(desc_clip)
@@ -321,11 +328,11 @@ class TitleCardGenerator:
             self._final.write_videofile(
                 str(output_file),
                 fps=fps,
-                codec='libx264',
-                audio_codec='aac',
-                preset='medium',
+                codec="libx264",
+                audio_codec="aac",
+                preset=encoding_preset,
                 threads=threads,
-                logger=None  # Disable moviepy's internal logging
+                logger=None,  # Disable moviepy's internal logging
             )
 
             logger.info("Successfully generated title sequence")
