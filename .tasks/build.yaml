@@ -6,7 +6,7 @@ vars:
   IMG: '{{.IMG | default "emiljacero/movie-merger:dev"}}'
 
 tasks:
-  docker:build:
+  image:
     desc: Build docker image
     vars:
       PUSH: '{{.PUSH | default "true"}}'

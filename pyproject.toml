@@ -7,7 +7,7 @@ name = "movie-merge"
 version = "0.2.0"
 description = "A tool for merging and processing video files with chapters and titles"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 license = "MIT"
 keywords = ["video", "processing", "ffmpeg"]
 authors = [

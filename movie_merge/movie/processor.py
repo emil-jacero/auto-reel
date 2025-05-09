@@ -14,6 +14,7 @@ from ..config.directory import DirectoryConfig
 from ..config.processing import ProcessingConfig
 from ..config.sort import SortMethod
 from ..ffmepg.wrapper import FFmpegWrapper
+from ..utils.file import should_ignore_directory
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,6 @@ class Movie:
         """Scan directory for video files and organize them into chapters."""
         logger.debug(f"Scanning directory: {self.directory}")
 
-        # First, process root directory clips into default chapter
         root_clips = self._process_clips_in_directory(self.directory)
         if root_clips:
             # Create default chapter
@@ -162,7 +162,7 @@ class Movie:
 
         # Then process subdirectories as additional chapters
         for chapter_dir in self.directory.iterdir():
-            if chapter_dir.is_dir() and chapter_dir.name != "original":
+            if chapter_dir.is_dir() and chapter_dir.name != "original" and not should_ignore_directory(chapter_dir):
                 logger.debug(f"Processing chapter directory: {chapter_dir}")
                 try:
                     chapter_clips = self._process_clips_in_directory(chapter_dir)
@@ -182,6 +182,8 @@ class Movie:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.exception("Detailed error:")
                     continue
+            elif chapter_dir.is_dir() and should_ignore_directory(chapter_dir):
+                logger.info(f"Ignoring chapter directory (found .reelignore): {chapter_dir}")
 
         if not self.chapters:
             logger.warning("No chapters or clips found in directory")
@@ -247,7 +249,8 @@ class Movie:
 
         try:
             # Prepare clips for merging
-            final_clips = []
+            original_clips = []
+            scaled_clips = []
             temp_files = []
 
             for clip in self.clips:
@@ -258,14 +261,12 @@ class Movie:
                     and hasattr(clip, "original_path")
                 ):
                     # Add the title segment
-                    final_clips.append(clip.path)
-                    temp_files.append(clip.path)
+                    original_clips.append(clip.path)
 
                     original_clip = clip.original_path
                     original_metadata = clip._extract_metadata(original_clip)
 
-                    # Get the actual duration used in the title sequence (which contains video content)
-                    # We need to get this from the title segment itself, not from the configuration
+                    # Get the actual duration used in the title sequence
                     used_duration = clip.metadata.duration
 
                     if original_metadata and original_metadata.duration > used_duration:
@@ -290,29 +291,84 @@ class Movie:
 
                         if not self.proc_config.options.dry_run:
                             self._ffmpeg._run_command(cmd)
-                            final_clips.append(temp_remainder)
+                            original_clips.append(temp_remainder)
                             temp_files.append(temp_remainder)
                 else:
                     # For regular clips, use them as is
-                    final_clips.append(clip.path)
+                    original_clips.append(clip.path)
+
+            # Check if all clips have the same dimensions
+            same_dimensions = True
+            reference_width = None
+            reference_height = None
+
+            for clip_path in original_clips:
+                # Get clip dimensions
+                try:
+                    info = self._ffmpeg.get_video_info(clip_path)
+                    width, height = info["width"], info["height"]
+
+                    # Set reference dimensions from first clip
+                    if reference_width is None:
+                        reference_width = width
+                        reference_height = height
+                        logger.debug(f"Reference dimensions: {width}x{height}")
+                    # Compare dimensions to reference
+                    elif width != reference_width or height != reference_height:
+                        same_dimensions = False
+                        logger.debug(f"Found different dimensions: {width}x{height} (reference: {reference_width}x{reference_height})")
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to get dimensions for {clip_path}: {e}")
+                    same_dimensions = False
+                    break
+
+            # If all clips have same dimensions, skip scaling
+            if same_dimensions and reference_width is not None and reference_height is not None:
+                logger.info(f"All clips have same dimensions ({reference_width}x{reference_height}). Skipping scaling.")
+                scaled_clips = original_clips
+            else:
+                logger.info("Clips have different dimensions. Performing scaling.")
+                # Create uniformly scaled versions of all clips with padding
+                for i, clip_path in enumerate(original_clips):
+                    # Create a temporary scaled version with letterbox/pillarbox as needed
+                    scaled_temp = self.proc_config.options.temp_dir / f"scaled_{i}_{clip_path.name}"
+
+                    # Get target resolution from configuration
+                    width, height = self.proc_config.options.target_resolution
+
+                    # Scale with padding to target resolution while maintaining aspect ratio
+                    # Use setsar=1 to ensure Square Aspect Ratio for pixels
+                    scale_cmd = [
+                        self._ffmpeg.ffmpeg_path, "-y", "-i", str(clip_path),
+                        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                        "-c:v", self.proc_config.encoding.video_codec.value,
+                        "-c:a", "copy",
+                        str(scaled_temp)
+                    ]
+
+                    if not self.proc_config.options.dry_run:
+                        self._ffmpeg._run_command(scale_cmd)
+                        scaled_clips.append(scaled_temp)
+                        temp_files.append(scaled_temp)
+                    else:
+                        logger.info(f"Would create scaled version of {clip_path} → {scaled_temp}")
 
             # Build ffmpeg command with complex filter for concatenation
             cmd = [self._ffmpeg.ffmpeg_path, "-y"]
 
             # Add input files
-            for path in final_clips:
+            for path in scaled_clips:
                 cmd.extend(["-i", str(path)])
 
             # Build filter complex string for proper concatenation
             filter_complex = []
 
             # Process each input stream
-            for i in range(len(final_clips)):
-                # Scale and set framerate for video
-                width, height = self.proc_config.options.target_resolution
+            for i in range(len(scaled_clips)):
+                # Set framerate for video - no need to scale since all inputs now have the same dimensions
                 filter_complex.append(
-                    f"[{i}:v]fps={self.target_fps},"
-                    f"scale={width}:{height}:force_original_aspect_ratio=decrease[v{i}]"
+                    f"[{i}:v]fps={self.target_fps}[v{i}]"
                 )
                 # Format audio
                 filter_complex.append(
@@ -320,12 +376,12 @@ class Movie:
                 )
 
             # Collect all normalized streams for concat
-            video_streams = "".join(f"[v{i}]" for i in range(len(final_clips)))
-            audio_streams = "".join(f"[a{i}]" for i in range(len(final_clips)))
+            video_streams = "".join(f"[v{i}]" for i in range(len(scaled_clips)))
+            audio_streams = "".join(f"[a{i}]" for i in range(len(scaled_clips)))
 
             # Add concat filters
-            filter_complex.append(f"{video_streams}concat=n={len(final_clips)}:v=1:a=0[vout]")
-            filter_complex.append(f"{audio_streams}concat=n={len(final_clips)}:v=0:a=1[aout]")
+            filter_complex.append(f"{video_streams}concat=n={len(scaled_clips)}:v=1:a=0[vout]")
+            filter_complex.append(f"{audio_streams}concat=n={len(scaled_clips)}:v=0:a=1[aout]")
 
             # Add the complete filter complex to the command
             cmd.extend(["-filter_complex", ";".join(filter_complex)])
@@ -403,6 +459,7 @@ class Movie:
                         logger.warning(f"Failed to remove temporary file {temp_file}: {e}")
             else:
                 logger.info(f"Would create movie: {output_file}")
+                logger.debug(f"Would run: {' '.join(cmd)}")
 
         except Exception as e:
             logger.error(f"Failed to create movie: {e}")

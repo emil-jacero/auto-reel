@@ -40,48 +40,26 @@ class FFmpegWrapper:
 
         self.logger = logger or logging.getLogger(__name__)
 
-    def _run_command(
-        self, cmd: List[str], capture_output: bool = True, check: bool = True
-    ) -> subprocess.CompletedProcess:
-        """Run a command and handle errors.
-
-        Args:
-            cmd: Command list to execute
-            capture_output: Whether to capture command output
-            check: Whether to check return code
-
-        Returns:
-            CompletedProcess instance
-
-        Raises:
-            FFmpegError: If command execution fails
-        """
+    def _run_command(self, cmd: List[str], capture_output: bool = True, check: bool = True) -> subprocess.CompletedProcess:
+        """Run a command and handle errors."""
         try:
             self.logger.debug(f"Running command: {' '.join(cmd)}")
-            return subprocess.run(cmd, capture_output=capture_output, text=True, check=check)
+            result = subprocess.run(cmd, capture_output=capture_output, text=True, check=check)
+            return result
         except subprocess.CalledProcessError as e:
-            raise FFmpegError(f"Command failed: {e.stderr}")
+            error_msg = e.stderr if e.stderr else "Unknown error"
+            self.logger.error(f"Command failed with exit code {e.returncode}: {error_msg}")
+            raise FFmpegError(f"Command failed: {error_msg}")
         except Exception as e:
+            self.logger.error(f"Error running command: {str(e)}")
             raise FFmpegError(f"Error running command: {str(e)}")
 
     def probe(self, input_file: Union[str, Path]) -> Dict[str, Any]:
-        """Get media file information using ffprobe.
-
-        Args:
-            input_file: Path to input media file
-
-        Returns:
-            Dictionary containing file information
-
-        Raises:
-            FFprobeError: If ffprobe command fails or output is invalid
-        """
+        """Get media file information using ffprobe."""
         cmd = [
             self.ffprobe_path,
-            "-v",
-            "quiet",
-            "-print_format",
-            "json",
+            "-v", "error",
+            "-print_format", "json",
             "-show_format",
             "-show_streams",
             str(input_file),
@@ -93,6 +71,7 @@ class FFmpegWrapper:
         except json.JSONDecodeError as e:
             raise FFprobeError(f"Failed to parse ffprobe output: {e}")
         except Exception as e:
+            self.logger.error(f"Probe failed: {str(e)}")
             raise FFprobeError(f"Probe failed: {str(e)}")
 
     def get_video_info(self, input_file: Union[str, Path]) -> Dict[str, Any]:
@@ -268,53 +247,3 @@ class FFmpegWrapper:
 
         except Exception as e:
             raise FFmpegError(f"Conversion failed: {str(e)}")
-
-    def create_overlay(
-        self,
-        input_file: Path,
-        frames_dir: Path,
-        overlay_file: Path,
-        fps: int = 30,
-        duration: float = 7.0,
-    ) -> None:
-        """Create overlay video from PNG frames."""
-        cmd = [
-            self.ffmpeg_path,
-            "-y",
-            "-framerate",
-            str(fps),
-            "-i",
-            str(frames_dir / "frame_%04d.png"),
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuva420p",  # Required for alpha transparency
-            "-t",
-            str(duration),
-            "-shortest",
-            str(overlay_file),
-        ]
-        self._run_command(cmd)
-
-    def overlay_video(
-        self,
-        input_file: Path,
-        overlay_file: Path,
-        output_file: Path,
-        options: ProcessingOptions,
-    ) -> None:
-        """Apply overlay video to input video."""
-        cmd = [
-            self.ffmpeg_path,
-            "-y",
-            "-i",
-            str(input_file),
-            "-i",
-            str(overlay_file),
-            "-filter_complex",
-            "[1:v]format=yuva420p[overlay];[0:v][overlay]overlay=0:0",
-            "-c:a",
-            "copy",
-            str(output_file),
-        ]
-        self._run_command(cmd)

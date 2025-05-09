@@ -22,10 +22,20 @@ vars:
 
   # Docker-specific variables
   CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
-  IMG: '{{.IMG | default "auto-reel:dev"}}'
+  IMG: '{{.IMG | default "emiljacero/auto-reel:dev"}}'
 
   # Build variables
   BUILD_PLATFORM: '{{.BUILD_PLATFORM | default "linux/amd64"}}'
+
+  # Common Run Variables (moved from tasks)
+  INPUT_DIR: '{{.INPUT_DIR | default "./hack/input"}}'
+  OUTPUT_DIR: '{{.OUTPUT_DIR | default "./hack/output"}}'
+  YEAR: '{{.YEAR | default 2024}}'
+  THREADS: '{{.THREADS | default 10}}'
+  LOG_LEVEL: '{{.LOG_LEVEL | default "DEBUG"}}'
+  USE_GPU: '{{.USE_GPU | default "true"}}'
+  GPU_QUALITY: '{{.GPU_QUALITY | default "20"}}'
+  VIDEO_CODEC: '{{.VIDEO_CODEC | default "H264_NVENC"}}'
 
 tasks:
   default:
@@ -108,28 +118,8 @@ tasks:
     cmds:
       - '{{.VENV_BIN}}/pytest --cov=movie_merger --cov-report=term-missing {{.CLI_ARGS}}'
 
-  build:
-    desc: Build Docker image
-    vars:
-      PLATFORM: '{{.BUILD_PLATFORM}}'
-      PUSH: '{{.PUSH | default "false"}}'
-    cmds:
-      - |
-        {{.CONTAINER_TOOL}} buildx build \
-          --platform {{.PLATFORM}} \
-          {{if eq .PUSH "true"}}--push{{else}}--load{{end}} \
-          --tag {{.IMG}} \
-          .
-
   docker:run:
     desc: Run docker container with NVIDIA support
-    vars:
-      INPUT_DIR: '{{.INPUT_DIR | default "./hack/input"}}'
-      OUTPUT_DIR: '{{.OUTPUT_DIR | default "./hack/output"}}'
-      YEAR: '{{.YEAR | default 2024}}'
-      USE_GPU: '{{.USE_GPU | default "true"}}'
-      GPU_QUALITY: '{{.GPU_QUALITY | default "23"}}'
-      THREADS: '{{.THREADS | default 8}}'
     cmds:
       - |
         {{.CONTAINER_TOOL}} run --rm -it \
@@ -139,22 +129,15 @@ tasks:
           {{.IMG}} \
           --years {{.YEAR}} \
           --threads {{.THREADS}} \
-          --log-level DEBUG \
+          --log-level {{.LOG_LEVEL}} \
           {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
           --gpu-quality {{.GPU_QUALITY}} \
+          --video-codec {{.VIDEO_CODEC}} \
           {{.CLI_ARGS}}
 
   run:
     desc: Run movie-merger CLI
     deps: [install]
-    vars:
-      INPUT_DIR: '{{.INPUT_DIR | default "./hack/input"}}'
-      OUTPUT_DIR: '{{.OUTPUT_DIR | default "./hack/output"}}'
-      YEAR: '{{.YEAR | default 2024}}'
-      USE_GPU: '{{.USE_GPU | default "true"}}'
-      GPU_QUALITY: '{{.GPU_QUALITY | default "20"}}'
-      THREADS: '{{.THREADS | default 10}}'
-      VIDEO_CODEC: '{{.VIDEO_CODEC | default "H264_NVENC"}}'
     env:
       PYTHONPATH: '{{.PROJECT_ROOT}}'
     cmds:
@@ -164,7 +147,7 @@ tasks:
           --output-dir {{.OUTPUT_DIR}}\
           --years {{.YEAR}} \
           --threads {{.THREADS}} \
-          --log-level DEBUG \
+          --log-level {{.LOG_LEVEL}} \
           {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
           --gpu-quality {{.GPU_QUALITY}} \
           --video-codec {{.VIDEO_CODEC}} \

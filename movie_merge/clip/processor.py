@@ -133,7 +133,41 @@ class Clip:
         file_path = path or self.path
 
         try:
-            probe_data = self._ffmpeg.probe(input_file=file_path)
+            # Check if file exists and has non-zero size
+            if not file_path.exists():
+                raise RuntimeError(f"File does not exist: {file_path}")
+
+            if file_path.stat().st_size == 0:
+                raise RuntimeError(f"File is empty: {file_path}")
+
+            # Add a small delay to ensure file is fully written/closed
+            import time
+            time.sleep(1)
+
+            # Try to probe the file
+            try:
+                probe_data = self._ffmpeg.probe(input_file=file_path)
+            except Exception as e:
+                logger.warning(f"Failed to probe file with ffprobe: {e}")
+                # Fall back to basic metadata
+                stats = file_path.stat()
+                return ClipMetadata(
+                    creation_date=datetime.fromtimestamp(stats.st_mtime, tz=timezone.utc),
+                    name=file_path.stem,
+                    extension=str(file_path.suffix).lower(),
+                    duration=0.0,
+                    frame_rate=25.0,  # Assume standard rate
+                    video_codec="unknown",
+                    width=1920,  # Assume HD
+                    height=1080,
+                    video_bitrate=0,
+                    audio_codec="unknown",
+                    audio_channels=2,
+                    audio_bitrate=0,
+                    audio_sample_rate=44100,
+                    file_size=stats.st_size,
+                    format="unknown"
+                )
 
             video_stream = next(
                 (s for s in probe_data["streams"] if s["codec_type"] == "video"), None
