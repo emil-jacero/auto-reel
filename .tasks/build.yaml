@@ -1,15 +1,10 @@
 version: '3'
 
-vars:
-  # Docker build variables
-  CONTAINER_TOOL: '{{.CONTAINER_TOOL | default "docker"}}'
-  IMG: '{{.IMG | default "emiljacero/movie-merger:dev"}}'
-
 tasks:
   image:
     desc: Build docker image
     vars:
-      PUSH: '{{.PUSH | default "true"}}'
+      PUSH: '{{.PUSH | default "false"}}'
     cmds:
       - echo "Building Docker image {{.IMG}}..."
       - |

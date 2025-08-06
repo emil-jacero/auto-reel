@@ -72,6 +72,13 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--max-concurrent-movies",
+        type=int,
+        default=1,
+        help="Number of movies to process simultaneously (default: 1)",
+    )
+
+    parser.add_argument(
         "-l",
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -148,6 +155,10 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.threads < 1:
         raise ValueError(f"Invalid thread count: {args.threads}")
 
+    # Check max concurrent movies
+    if args.max_concurrent_movies < 1:
+        raise ValueError(f"Invalid max concurrent movies: {args.max_concurrent_movies}")
+
     # Validate target resolution
     try:
         width, height = map(int, args.target_resolution.split("x"))
@@ -179,6 +190,7 @@ def process_videos_by_years(args: argparse.Namespace) -> None:
         ),
         options=ProcessingOptions(
             threads=args.threads,
+            max_concurrent_movies=args.max_concurrent_movies,
             target_resolution=(width, height),
             temp_dir=Path(args.temp_dir) if args.temp_dir else Path(args.output_dir) / "temp",
             dry_run=args.dry_run,

@@ -31,11 +31,13 @@ vars:
   INPUT_DIR: '{{.INPUT_DIR | default "./hack/input"}}'
   OUTPUT_DIR: '{{.OUTPUT_DIR | default "./hack/output"}}'
   YEAR: '{{.YEAR | default 2024}}'
-  THREADS: '{{.THREADS | default 10}}'
+  THREADS: '{{.THREADS | default 8}}'
+  MAX_CONCURRENT_MOVIES: '{{.MAX_CONCURRENT_MOVIES | default 2}}'
   LOG_LEVEL: '{{.LOG_LEVEL | default "DEBUG"}}'
   USE_GPU: '{{.USE_GPU | default "true"}}'
   GPU_QUALITY: '{{.GPU_QUALITY | default "20"}}'
   VIDEO_CODEC: '{{.VIDEO_CODEC | default "H264_NVENC"}}'
+  OVERWRITE: '{{.OVERWRITE | default "false"}}'
 
 tasks:
   default:
@@ -127,12 +129,16 @@ tasks:
           -v {{.INPUT_DIR}}:/input \
           -v {{.OUTPUT_DIR}}:/output \
           {{.IMG}} \
+          --input-dir /input \
+          --output-dir /output \
           --years {{.YEAR}} \
           --threads {{.THREADS}} \
+          --max-concurrent-movies {{.MAX_CONCURRENT_MOVIES}} \
           --log-level {{.LOG_LEVEL}} \
-          {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
+          {{if eq .USE_GPU "true"}}--use-gpu \{{end}}
           --gpu-quality {{.GPU_QUALITY}} \
           --video-codec {{.VIDEO_CODEC}} \
+          {{if eq .OVERWRITE "true"}}--overwrite \{{end}}
           {{.CLI_ARGS}}
 
   run:
@@ -147,10 +153,12 @@ tasks:
           --output-dir {{.OUTPUT_DIR}}\
           --years {{.YEAR}} \
           --threads {{.THREADS}} \
+          --max-concurrent-movies {{.MAX_CONCURRENT_MOVIES}} \
           --log-level {{.LOG_LEVEL}} \
-          {{if eq .USE_GPU "true"}}--use-gpu{{end}} \
+          {{if eq .USE_GPU "true"}}--use-gpu \{{end}}
           --gpu-quality {{.GPU_QUALITY}} \
           --video-codec {{.VIDEO_CODEC}} \
+          {{if eq .OVERWRITE "true"}}--overwrite \{{end}}
           {{.CLI_ARGS}}
 
   docs:

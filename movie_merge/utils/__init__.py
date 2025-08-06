@@ -12,7 +12,7 @@ from .file import (
     validate_path,
     verify_writeable_directory,
 )
-from .logging import ColorFormatter, configure_logging, log_exception
+from .logging import ContextualColorFormatter, configure_logging, log_exception
 
 __all__ = [
     "FileError",
@@ -25,7 +25,7 @@ __all__ = [
     "copy_with_progress",
     "move_with_progress",
     "verify_writeable_directory",
-    "ColorFormatter",
+    "ContextualColorFormatter",
     "configure_logging",
     "log_exception",
 ]

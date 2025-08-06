@@ -70,6 +70,71 @@ class DirectoryConfig:
         }
 
 
+def format_title_case(text: str) -> str:
+    """Format text to proper title case, handling Swedish characters and special cases."""
+    if not text:
+        return text
+
+    # Words that should remain lowercase in titles (Swedish articles, prepositions, etc.)
+    lowercase_words = {
+        "och",
+        "eller",
+        "men",
+        "utan",
+        "av",
+        "på",
+        "i",
+        "för",
+        "till",
+        "från",
+        "med",
+        "över",
+        "under",
+        "vid",
+        "genom",
+        "mot",
+        "om",
+        "åt",
+        "ur",
+        "and",
+        "or",
+        "but",
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+    }
+
+    words = text.split()
+    formatted_words = []
+
+    for i, word in enumerate(words):
+        # Clean word (remove punctuation for checking)
+        clean_word = re.sub(r"[^\w\såäöÅÄÖ]", "", word.lower())
+
+        # First word is always capitalized
+        if i == 0:
+            formatted_words.append(word.capitalize())
+        # Check if it's a number with suffix (like "65år")
+        elif re.match(r"\d+\w*", clean_word):
+            formatted_words.append(word.lower())
+        # Keep lowercase words lowercase (except first word)
+        elif clean_word in lowercase_words:
+            formatted_words.append(word.lower())
+        # Capitalize other words
+        else:
+            formatted_words.append(word.capitalize())
+
+    return " ".join(formatted_words)
+
+
 def parse_folder_name(folder_name: str) -> Tuple[datetime, str, Optional[str]]:
     """Parse folder name with format 'YYYY-MM-DD - Title [- Location]'."""
     date_pattern = r"^(\d{4}-\d{2}-\d{2})"
@@ -91,8 +156,8 @@ def parse_folder_name(folder_name: str) -> Tuple[datetime, str, Optional[str]]:
         raise DirectoryParseError(f"Could not find required title in folder name: {folder_name}")
 
     parts = remaining.rsplit(" - ", 1)
-    title = parts[0].strip()
-    location = parts[1].strip() if len(parts) == 2 else None
+    title = format_title_case(parts[0].strip())
+    location = format_title_case(parts[1].strip()) if len(parts) == 2 else None
 
     return date, title, location
 
@@ -148,9 +213,7 @@ def parse_directory_config(directory: Path) -> DirectoryConfig:
             f"or folder name for directory: {directory}"
         )
 
-    # Set description from location if not explicitly set
-    if not config.description and config.metadata.location:
-        config.description = f"Plats: {config.metadata.location}"
+    # Note: Description is handled in title generation to avoid duplication with location
 
     # Generate movie title if not set
     if not config.title:

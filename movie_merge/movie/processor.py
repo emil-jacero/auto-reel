@@ -2,6 +2,7 @@
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from ..config.directory import DirectoryConfig
 from ..config.processing import ProcessingConfig
 from ..config.sort import SortMethod
 from ..ffmepg.wrapper import FFmpegWrapper
+from ..utils.logging import LoggingContext, set_movie_context, set_clip_context
 from ..utils.file import should_ignore_directory
 
 logger = logging.getLogger(__name__)
@@ -92,8 +94,20 @@ class Movie:
     def _sort_clips(self, clips: List[Clip]) -> List[Clip]:
         """Sort clips according to directory configuration."""
         if self.sort_config.method == SortMethod.DATETIME:
+
+            def normalize_datetime(dt):
+                """Normalize datetime to remove timezone info for comparison."""
+                if dt is None:
+                    return dt
+                # Convert timezone-aware datetime to naive datetime (UTC)
+                if dt.tzinfo is not None:
+                    return dt.replace(tzinfo=None)
+                return dt
+
             return sorted(
-                clips, key=lambda x: x.metadata.creation_date, reverse=self.sort_config.reverse
+                clips,
+                key=lambda x: normalize_datetime(x.metadata.creation_date),
+                reverse=self.sort_config.reverse,
             )
         elif self.sort_config.method == SortMethod.FILENAME:
             return sorted(clips, key=lambda x: x.path.name, reverse=self.sort_config.reverse)
@@ -104,36 +118,90 @@ class Movie:
                 reverse=self.sort_config.reverse,
             )
         else:
+            # Filter out clips with no metadata (shouldn't happen but safety check)
+            clips_with_metadata = [clip for clip in clips if clip.metadata is not None]
             return sorted(
-                clips, key=lambda x: x.metadata.creation_date, reverse=self.sort_config.reverse
+                clips_with_metadata,
+                key=lambda x: x.metadata.creation_date,
+                reverse=self.sort_config.reverse,
             )
+
+    def _extract_metadata_for_clip(self, clip: Clip) -> Clip:
+        """Extract metadata for a single clip (used for parallel processing)."""
+        with LoggingContext(clip=clip.path.name):
+            try:
+                clip.extract_metadata_if_needed()
+                logger.debug(f"Successfully extracted metadata")
+                return clip
+            except Exception as e:
+                logger.error(f"Failed to extract metadata: {e}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.exception("Detailed error:")
+                raise
 
     def _process_clips_in_directory(self, directory: Path) -> List[Clip]:
         """Process all video files in a directory."""
+        # First pass: Create clips without metadata extraction
         clips = []
         for ext in VIDEO_EXTENSIONS:
             pattern = f"*{ext}"
             for video_file in directory.glob(pattern, case_sensitive=False):
                 if video_file.parent.name != "original":
                     video_file_path = Path(video_file)
-                    logger.debug(f"Processing clip: {video_file.name}")
+                    logger.debug(f"Found clip: {video_file.name}")
                     try:
-                        clip = Clip(video_file_path, self.proc_config, self.dir_config)
-                        logger.debug(
-                            f"Clip metadata: {json.dumps(clip.to_dict(), indent=2, ensure_ascii=False)}"
+                        # Create clip without extracting metadata yet
+                        clip = Clip(
+                            video_file_path,
+                            self.proc_config,
+                            self.dir_config,
+                            extract_metadata=False,
                         )
-
-                        # Add clip to list
                         clips.append(clip)
-                        logger.debug(f"Successfully processed clip: {video_file}")
+                        logger.debug(f"Successfully created clip object for: {video_file}")
                     except Exception as e:
-                        logger.error(f"Failed to process clip {video_file}: {e}")
+                        logger.error(f"Failed to create clip for {video_file}: {e}")
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.exception("Detailed error:")
                         continue
 
+        if not clips:
+            return []
+
+        # Second pass: Extract metadata in parallel
+        logger.info(f"Extracting metadata for {len(clips)} clips in parallel...")
+        successful_clips = []
+
+        # Use number of CPU cores, but cap at reasonable limit to avoid overwhelming system
+        max_workers = min(len(clips), self.proc_config.options.threads, 24)
+        logger.debug(f"Using {max_workers} threads for metadata extraction")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all clips for metadata extraction
+            future_to_clip = {
+                executor.submit(self._extract_metadata_for_clip, clip): clip for clip in clips
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_clip):
+                clip = future_to_clip[future]
+                try:
+                    processed_clip = future.result()
+                    successful_clips.append(processed_clip)
+                    logger.debug(
+                        f"Clip metadata: {json.dumps(processed_clip.to_dict(), indent=2, ensure_ascii=False)}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to extract metadata for {clip.path}: {e}")
+                    # Don't include clips that failed metadata extraction
+                    continue
+
+        logger.info(
+            f"Successfully extracted metadata for {len(successful_clips)}/{len(clips)} clips"
+        )
+
         # Sort clips based on configuration
-        sorted_clips = self._sort_clips(clips) if clips else []
+        sorted_clips = self._sort_clips(successful_clips) if successful_clips else []
 
         # Make first clip the title clip
         if sorted_clips:
@@ -162,7 +230,11 @@ class Movie:
 
         # Then process subdirectories as additional chapters
         for chapter_dir in self.directory.iterdir():
-            if chapter_dir.is_dir() and chapter_dir.name != "original" and not should_ignore_directory(chapter_dir):
+            if (
+                chapter_dir.is_dir()
+                and chapter_dir.name != "original"
+                and not should_ignore_directory(chapter_dir)
+            ):
                 logger.debug(f"Processing chapter directory: {chapter_dir}")
                 try:
                     chapter_clips = self._process_clips_in_directory(chapter_dir)
@@ -225,6 +297,7 @@ class Movie:
                     title_clip = clip.create_title(
                         chapter.title,
                         chapter.description,
+                        location=self.dir_config.metadata.location,
                         title_config=chapter_title_config,
                         use_segment=True,
                     )
@@ -316,7 +389,9 @@ class Movie:
                     # Compare dimensions to reference
                     elif width != reference_width or height != reference_height:
                         same_dimensions = False
-                        logger.debug(f"Found different dimensions: {width}x{height} (reference: {reference_width}x{reference_height})")
+                        logger.debug(
+                            f"Found different dimensions: {width}x{height} (reference: {reference_width}x{reference_height})"
+                        )
                         break
                 except Exception as e:
                     logger.warning(f"Failed to get dimensions for {clip_path}: {e}")
@@ -325,7 +400,9 @@ class Movie:
 
             # If all clips have same dimensions, skip scaling
             if same_dimensions and reference_width is not None and reference_height is not None:
-                logger.info(f"All clips have same dimensions ({reference_width}x{reference_height}). Skipping scaling.")
+                logger.info(
+                    f"All clips have same dimensions ({reference_width}x{reference_height}). Skipping scaling."
+                )
                 scaled_clips = original_clips
             else:
                 logger.info("Clips have different dimensions. Performing scaling.")
@@ -340,11 +417,17 @@ class Movie:
                     # Scale with padding to target resolution while maintaining aspect ratio
                     # Use setsar=1 to ensure Square Aspect Ratio for pixels
                     scale_cmd = [
-                        self._ffmpeg.ffmpeg_path, "-y", "-i", str(clip_path),
-                        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
-                        "-c:v", self.proc_config.encoding.video_codec.value,
-                        "-c:a", "copy",
-                        str(scaled_temp)
+                        self._ffmpeg.ffmpeg_path,
+                        "-y",
+                        "-i",
+                        str(clip_path),
+                        "-vf",
+                        f"scale={width}:{height}:force_original_aspect_ratio=1,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                        "-c:v",
+                        self.proc_config.encoding.video_codec.value,
+                        "-c:a",
+                        "copy",
+                        str(scaled_temp),
                     ]
 
                     if not self.proc_config.options.dry_run:
@@ -367,9 +450,7 @@ class Movie:
             # Process each input stream
             for i in range(len(scaled_clips)):
                 # Set framerate for video - no need to scale since all inputs now have the same dimensions
-                filter_complex.append(
-                    f"[{i}:v]fps={self.target_fps}[v{i}]"
-                )
+                filter_complex.append(f"[{i}:v]fps={self.target_fps}[v{i}]")
                 # Format audio
                 filter_complex.append(
                     f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a{i}]"

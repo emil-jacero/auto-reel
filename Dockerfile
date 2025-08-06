@@ -1,31 +1,4 @@
-# Builder stage - compiles and installs the Python package
-FROM python:3.13-slim-bullseye AS builder
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    wget \
-    gnupg2 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create virtual environment
-RUN python -m venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Create app directory
-WORKDIR /app
-
-# Copy only the files needed for installation first
-COPY pyproject.toml README.md ./
-
-# Copy the package source
-COPY movie_merge ./movie_merge
-
-# Install the package
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -e .
-
-# Runtime stage with minimal dependencies
+# Single stage build with NVIDIA CUDA runtime
 FROM nvidia/cuda:12.9.0-runtime-ubuntu24.04
 
 # Set timezone (can be overridden with build arg)
@@ -90,34 +63,30 @@ RUN if [ -f /etc/ImageMagick-6/policy.xml ]; then \
     sed -i 's/<policy domain="path" rights="none" pattern="@\*"\/>/<!-- <policy domain="path" rights="none" pattern="@\*"\/> -->/' /etc/ImageMagick/policy.xml; \
     fi
 
-# Copy virtual environment from builder
-COPY --from=builder /venv /venv
-ENV PATH="/venv/bin:$PATH"
-
-# Create app directory and user
-RUN useradd -m -u 1000 movie_merge && \
-    mkdir -p /app && \
-    chown -R movie_merge:movie_merge /app
-
-# Set working directory
+# Copy source files and install package
 WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY movie_merge ./movie_merge
 
-# Copy the installed package from builder
-COPY --from=builder /app /app
-RUN chown -R movie_merge:movie_merge /app
+# Install the package directly
+RUN pip3.13 install --upgrade pip && \
+    pip3.13 install --no-cache-dir .
+
+# Use existing user with UID 1000 and set permissions
+RUN chown -R 1000:1000 /app
 
 # Create and set permissions for input/output/temp directories
 RUN mkdir -p /input /output /temp && \
-    chown -R movie_merge:movie_merge /input /output /temp
+    chown -R 1000:1000 /input /output /temp
 
 # Add NVIDIA runtime support
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 # Create a custom font directory in user's home
-RUN mkdir -p /home/movie_merge/.fonts && \
-    cp /usr/share/fonts/truetype/ubuntu/Ubuntu-M.ttf /home/movie_merge/.fonts/ && \
-    chown -R movie_merge:movie_merge /home/movie_merge/.fonts
+RUN mkdir -p /home/ubuntu/.fonts && \
+    cp /usr/share/fonts/truetype/ubuntu/Ubuntu-M.ttf /home/ubuntu/.fonts/ && \
+    chown -R 1000:1000 /home/ubuntu/.fonts
 
 # Set font configuration
 ENV FONTCONFIG_PATH=/etc/fonts
@@ -128,10 +97,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ffmpeg -version && exiftool -ver && python3.13 -V || exit 1
 
 # Switch to non-root user
-USER movie_merge
+USER 1000:1000
 
 # Set entrypoint to use the installed package
-ENTRYPOINT ["movie-merge"]
+ENTRYPOINT ["python3.13", "-m", "movie_merge.cli.main"]
 
 # Default command if no args provided
 CMD ["--help"]

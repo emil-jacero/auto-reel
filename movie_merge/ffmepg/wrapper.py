@@ -40,7 +40,9 @@ class FFmpegWrapper:
 
         self.logger = logger or logging.getLogger(__name__)
 
-    def _run_command(self, cmd: List[str], capture_output: bool = True, check: bool = True) -> subprocess.CompletedProcess:
+    def _run_command(
+        self, cmd: List[str], capture_output: bool = True, check: bool = True
+    ) -> subprocess.CompletedProcess:
         """Run a command and handle errors."""
         try:
             self.logger.debug(f"Running command: {' '.join(cmd)}")
@@ -58,8 +60,10 @@ class FFmpegWrapper:
         """Get media file information using ffprobe."""
         cmd = [
             self.ffprobe_path,
-            "-v", "error",
-            "-print_format", "json",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
             str(input_file),

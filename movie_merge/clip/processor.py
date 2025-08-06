@@ -13,6 +13,7 @@ from movie_merge.constants import UNSUPPORTED_VIDEO_EXTENSIONS
 from ..config.directory import DirectoryConfig
 from ..config.processing import ProcessingConfig
 from ..ffmepg.wrapper import FFmpegWrapper
+from ..utils.logging import LoggingContext
 from .title import TitleCardConfig, TitleCardGenerator
 
 logger = logging.getLogger(__name__)
@@ -71,22 +72,36 @@ class Clip:
         proc_config: ProcessingConfig,
         dir_config: DirectoryConfig,
         is_title: bool = False,
+        extract_metadata: bool = True,
     ):
         """Initialize clip processor.
 
         Args:
             input_file: Path to video file
-            config: Processing configuration
+            proc_config: Processing configuration
+            dir_config: Directory configuration
+            is_title: Whether this clip should have a title card
+            extract_metadata: Whether to extract metadata immediately (default: True)
         """
         self._ffmpeg: FFmpegWrapper = FFmpegWrapper()
         self.path: Path = input_file
         self.is_title: bool = is_title
         self.proc_config: ProcessingConfig = proc_config
         self.dir_config: DirectoryConfig = dir_config
-        self.metadata: ClipMetadata = self._extract_metadata()
+
+        # Initialize metadata - will be set later if extract_metadata is True
+        self.metadata: Optional[ClipMetadata] = None
+
+        if extract_metadata:
+            self.metadata = self._extract_metadata()
 
         if not self.path.exists():
             raise FileNotFoundError(f"Video file not found: {self.path}")
+
+    def extract_metadata_if_needed(self) -> None:
+        """Extract metadata if not already done."""
+        if self.metadata is None:
+            self.metadata = self._extract_metadata()
 
     def to_dict(self) -> dict:
         """Convert clip to dictionary."""
@@ -94,7 +109,7 @@ class Clip:
             "path": str(self.path),
             "is_title": self.is_title,
             "processing_config": self.proc_config.to_dict(),
-            "metadata": self.metadata.to_dict(),
+            "metadata": self.metadata.to_dict() if self.metadata else None,
         }
 
     def _extract_datetime_from_exiftool(self, path: Optional[Path] = None) -> Optional[datetime]:
@@ -142,6 +157,7 @@ class Clip:
 
             # Add a small delay to ensure file is fully written/closed
             import time
+
             time.sleep(1)
 
             # Try to probe the file
@@ -166,7 +182,7 @@ class Clip:
                     audio_bitrate=0,
                     audio_sample_rate=44100,
                     file_size=stats.st_size,
-                    format="unknown"
+                    format="unknown",
                 )
 
             video_stream = next(
@@ -314,53 +330,56 @@ class Clip:
         self,
         title: str,
         description: Optional[str] = None,
+        location: Optional[str] = None,
         title_config: Optional[TitleCardConfig] = None,
         use_segment: bool = True,
     ) -> "Clip":
         """Create title overlay for clip."""
-        try:
-            logger.info(f"Creating title sequence for clip: {self.path.name}")
+        with LoggingContext(clip=self.path.name):
+            try:
+                logger.info(f"Creating title sequence")
 
-            # Store original path for later use
-            self.original_path = self.path
-            self.is_title_clip = True
+                # Store original path for later use
+                self.original_path = self.path
+                self.is_title_clip = True
 
-            # Use provided title config or default from directory config
-            if title_config is None:
-                title_config = self.dir_config.title_config
+                # Use provided title config or default from directory config
+                if title_config is None:
+                    title_config = self.dir_config.title_config
 
-            generator = TitleCardGenerator()
-            output_file = (
-                self.proc_config.options.temp_dir
-                / f"{self.metadata.name}_with_title{self.path.suffix}"
-            )
+                generator = TitleCardGenerator()
+                output_file = (
+                    self.proc_config.options.temp_dir
+                    / f"{self.metadata.name}_with_title{self.path.suffix}"
+                )
 
-            # Generate the title sequence using the specified framerate
-            generator.generate_title_sequence(
-                input_file=self.path,
-                output_file=output_file,
-                title=title,
-                description=description,
-                config=title_config,
-                threads=self.proc_config.options.threads,
-                fps=self.metadata.frame_rate,
-                use_segment=use_segment,
-                encoding_preset=self.proc_config.encoding.preset,
-            )
+                # Generate the title sequence using the specified framerate
+                generator.generate_title_sequence(
+                    input_file=self.path,
+                    output_file=output_file,
+                    title=title,
+                    description=description,
+                    location=location,
+                    config=title_config,
+                    threads=self.proc_config.options.threads,
+                    fps=self.metadata.frame_rate,
+                    use_segment=use_segment,
+                    encoding_preset=self.proc_config.encoding.preset,
+                )
 
-            # Update clip path to point to new video with title
-            self.path = output_file
-            # Update metadata for the new clip
-            self.metadata = self._extract_metadata()
+                # Update clip path to point to new video with title
+                self.path = output_file
+                # Update metadata for the new clip
+                self.metadata = self._extract_metadata()
 
-            # Save title duration for later use
-            self.title_duration = title_config.duration + 2 * title_config.fade_duration
+                # Save title duration for later use
+                self.title_duration = title_config.duration + 2 * title_config.fade_duration
 
-            logger.info(f"Successfully created title sequence: {output_file}")
-            return self
+                logger.info(f"Successfully created title sequence")
+                return self
 
-        except Exception as e:
-            logger.error(f"Failed to create title for clip {self.path}: {e}")
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.exception("Traceback:")
-            raise RuntimeError(f"Failed to create title: {e}")
+            except Exception as e:
+                logger.error(f"Failed to create title: {e}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.exception("Traceback:")
+                raise RuntimeError(f"Failed to create title: {e}")

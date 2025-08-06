@@ -38,6 +38,11 @@ class EncodingConfig:
         if self.use_gpu and self.video_codec not in VideoCodec.get_gpu_codecs():
             raise ValueError("Selected codec does not support GPU acceleration")
 
+        if not self.use_gpu and self.video_codec in VideoCodec.get_gpu_codecs():
+            raise ValueError(
+                "GPU codec specified but use_gpu is False. Either enable GPU or use a CPU codec"
+            )
+
     def to_dict(self) -> dict:
         """Convert configuration to dictionary."""
         return {
@@ -64,6 +69,7 @@ class ProcessingOptions:
     """General processing options."""
 
     threads: int = 2
+    max_concurrent_movies: int = 1  # Number of movies to process simultaneously
     target_resolution: Tuple[int, int] = (1920, 1080)
     temp_dir: Optional[Path] = None
     chunk_size: int = 1024 * 1024  # 1MB chunks for file operations
@@ -76,6 +82,9 @@ class ProcessingOptions:
         if self.threads < 1:
             raise ValueError("Thread count must be at least 1")
 
+        if self.max_concurrent_movies < 1:
+            raise ValueError("Max concurrent movies must be at least 1")
+
         if not all(x > 0 for x in self.target_resolution):
             raise ValueError("Resolution dimensions must be positive")
 
@@ -83,6 +92,7 @@ class ProcessingOptions:
         """Convert options to dictionary."""
         return {
             "threads": self.threads,
+            "max_concurrent_movies": self.max_concurrent_movies,
             "target_resolution": self.target_resolution,
             "temp_dir": str(self.temp_dir) if self.temp_dir else None,
             "chunk_size": self.chunk_size,
